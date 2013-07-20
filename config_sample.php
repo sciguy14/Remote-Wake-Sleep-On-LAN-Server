@@ -1,7 +1,7 @@
 <?php
 	/*
-	Remote Wake-On-LAN Server [CONFIGURATION FILE]
-	https://github.com/sciguy14/Remote-Wake-On-LAN-Server
+	Remote Wake/Sleep-On-LAN Server [CONFIGURATION FILE]
+	https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server
 	Author: Jeremy E. Blum (http://www.jeremyblum.com)
 	License: GPL v3 (http://www.gnu.org/licenses/gpl.html)
 	
@@ -21,4 +21,8 @@
 	
 	//This is the LOCAL IP address of the computer you are trying to wake.  Use a reserved DHCP through your router's administration interace to ensure it doesn't change.
 	$COMPUTER_LOCAL_IP = '192.168.1.100';
+	
+	//This is the Port being used by the Windows SleepOnLan Utility to initiate a Sleep State
+	//http://www.ireksoftware.com/SleepOnLan/
+	$COMPUTER_SLEEP_CMD_PORT = 7760
 ?>
