@@ -81,7 +81,7 @@ ob_end_flush();
   <body>
 
     <div class="container">
-    	<form class="form-signin" action="/" method="post">
+    	<form class="form-signin" method="post">
         	<h3 class="form-signin-heading">
 			<?php 
 				if (isset($_POST['submit']))
