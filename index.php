@@ -5,7 +5,7 @@ Author: Jeremy E. Blum (http://www.jeremyblum.com)
 License: GPL v3 (http://www.gnu.org/licenses/gpl.html)
 */ 
 
-//You should not need to edit this file. Adjust Paramets in the config file:
+//You should not need to edit this file. Adjust Parameters in the config file:
 require_once('config.php');
 
 //Uncomment to report PHP errors.
