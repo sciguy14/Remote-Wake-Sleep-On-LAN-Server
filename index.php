@@ -83,17 +83,33 @@ ob_end_flush();
     <div class="container">
     	<form class="form-signin" method="post">
         	<h3 class="form-signin-heading">
-			<?php 
-				if (isset($_POST['submit']))
-				{
-					if ($_POST['submit'] == "wake") echo "Waking Up!"; 
-					elseif ($_POST['submit'] == "sleep") echo "Going to Sleep!";
+			<?php
+			
+				$approved_wake = false;
+				$approved_sleep = false;
+				if ( isset($_POST['password']) )
+                {
+                    $hash = hash("sha256", $_POST['password']);
+                    if ($hash == $APPROVED_HASH)
+                    {
+						if ($_POST['submit'] == "wake")
+						{
+							$approved_wake = true;
+						}
+						elseif ($_POST['submit'] == "sleep")
+						{
+							$approved_sleep = true;
+						}
+					}
 				}
+			 
+				if ($approved_wake) echo "Waking Up!";
+				elseif ($approved_sleep) echo "Going to Sleep!";
 				else echo "Remote Wake/Sleep-On-LAN";
 			?>
             </h3>
             <?php
-				if (!isset($_POST['submit']))
+				if (!isset($_POST['submit']) || (isset($_POST['submit']) && !$approved_wake && !$approved_sleep))
 				{
 					echo "<h5 id='wait'>Querying Computer State. Please Wait...</h5>";
 					$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP);
@@ -114,88 +130,81 @@ ob_end_flush();
 				                
                 $show_form = true;
                 
-                if ( isset($_POST['password']) )
+                if ($approved_wake)
                 {
-                    $hash = hash("sha256", $_POST['password']);
-                    if ($hash == $APPROVED_HASH)
-                    {
-						if ($_POST['submit'] == "wake")
+                	echo "<p>Approved. Sending WOL Command...</p>";
+					exec ('wakeonlan ' . $COMPUTER_MAC);
+					echo "<p>Command Sent. Waiting for computer to wake up...</p><p>";
+					$count = 1;
+					$down = true;
+					while ($count <= $MAX_PINGS && $down == true)
+					{
+						echo "Ping " . $count . "...";
+						$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP);
+						$count++;
+						if ($pinginfo != "")
 						{
-							echo "<p>Approved. Sending WOL Command...</p>";
-							exec ('wakeonlan ' . $COMPUTER_MAC);
-							echo "<p>Command Sent. Waiting for computer to wake up...</p><p>";
-							$count = 1;
-							$down = true;
-							while ($count <= $MAX_PINGS && $down == true)
-							{
-								echo "Ping " . $count . "...";
-								$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP);
-								$count++;
-								if ($pinginfo != "")
-								{
-									$down = false;
-									echo "<span style='color:#00CC00;'><b>It's Alive!</b></span><br />";
-									$show_form = false;
-								}
-								else
-								{
-									echo "<span style='color:#CC0000;'><b>Still Down.</b></span><br />";
-								}	
-							}
-							echo "</p>";
-							if ($down == true)
-							{
-								echo "<p style='color:#CC0000;'><b>FAILED!</b> The remote computer doesn't seem to be waking up... Try again?</p>";
-							}
+							$down = false;
+							echo "<span style='color:#00CC00;'><b>It's Alive!</b></span><br />";
+							$show_form = false;
 						}
-						elseif ($_POST['submit'] == "sleep")
+						else
 						{
-							echo "<p>Approved. Sending Sleep Command...</p>";
-							$ch = curl_init();
-							curl_setopt($ch, CURLOPT_URL, "http://" . $COMPUTER_LOCAL_IP . ":" . $COMPUTER_SLEEP_CMD_PORT . "/suspend");
-							curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-							curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
-							
-							if (curl_exec($ch) === false)
+							echo "<span style='color:#CC0000;'><b>Still Down.</b></span><br />";
+						}	
+					}
+					echo "</p>";
+					if ($down == true)
+					{
+						echo "<p style='color:#CC0000;'><b>FAILED!</b> The remote computer doesn't seem to be waking up... Try again?</p>";
+					}
+				}
+				elseif ($approved_sleep)
+				{
+					echo "<p>Approved. Sending Sleep Command...</p>";
+					$ch = curl_init();
+					curl_setopt($ch, CURLOPT_URL, "http://" . $COMPUTER_LOCAL_IP . ":" . $COMPUTER_SLEEP_CMD_PORT . "/suspend");
+					curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+					curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+					
+					if (curl_exec($ch) === false)
+					{
+						echo "<p><span style='color:#CC0000;'><b>Command Failed:</b></span> " . curl_error($ch) . "</p>";
+					}
+					else
+					{
+						echo "<p><span style='color:#00CC00;'><b>Command Succeeded!</b></span> Waiting for computer to go to sleep...</p><p>";
+						$count = 1;
+						$down = false;
+						while ($count <= $MAX_PINGS && $down == false)
+						{
+							echo "Ping " . $count . "...";
+							$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP);
+							$count++;
+							if ($pinginfo == "")
 							{
-								echo "<p><span style='color:#CC0000;'><b>Command Failed:</b></span> " . curl_error($ch) . "</p>";
+								$down = true;
+								echo "<span style='color:#00CC00;'><b>It's Asleep!</b></span><br />";
+								$show_form = false;
 							}
 							else
 							{
-								echo "<p><span style='color:#00CC00;'><b>Command Succeeded!</b></span> Waiting for computer to go to sleep...</p><p>";
-								$count = 1;
-								$down = false;
-								while ($count <= $MAX_PINGS && $down == false)
-								{
-									echo "Ping " . $count . "...";
-									$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP);
-									$count++;
-									if ($pinginfo == "")
-									{
-										$down = true;
-										echo "<span style='color:#00CC00;'><b>It's Asleep!</b></span><br />";
-										$show_form = false;
-									}
-									else
-									{
-										echo "<span style='color:#CC0000;'><b>Still Awake.</b></span><br />";
-									}
-									sleep(3);
-								}
-								echo "</p>";
-								if ($down == false)
-								{
-									echo "<p style='color:#CC0000;'><b>FAILED!</b> The remote computer doesn't seem to be falling asleep... Try again?</p>";
-								}
+								echo "<span style='color:#CC0000;'><b>Still Awake.</b></span><br />";
 							}
-							curl_close($ch);
+							sleep(3);
 						}
-                    }
-                    else
-                    {
-                        echo "<p style='color:#CC0000;'><b>DENIED.</b></p>";
-                    }		
-                }
+						echo "</p>";
+						if ($down == false)
+						{
+							echo "<p style='color:#CC0000;'><b>FAILED!</b> The remote computer doesn't seem to be falling asleep... Try again?</p>";
+						}
+					}
+					curl_close($ch);
+				}
+				elseif (isset($_POST['submit']))
+				{
+					echo "<p style='color:#CC0000;'><b>Invalid Passphrase. Request Denied.</b></p>";
+				}		
                 
                 if ($show_form)
                 {
