@@ -24,5 +24,12 @@
 	
 	//This is the Port being used by the Windows SleepOnLan Utility to initiate a Sleep State
 	//http://www.ireksoftware.com/SleepOnLan/
-	$COMPUTER_SLEEP_CMD_PORT = 7760
+	$COMPUTER_SLEEP_CMD_PORT = 7760;
+	
+	//This is the location of the bootstrap style folder relative to your index and config file. Default = "" (Same folder as this file)
+	//Directory must be called "bootstrap". You may wish to move if this WOL script is the "child" of a larger web project on your Pi, that will also use bootstrap styling.
+	//If if it on directory up, for example, you would set this to "../"
+	//Two directories up? Set too "../../"
+	//etc...
+	$BOOTSTRAP_LOCATION_PREFIX = "";
 ?>
