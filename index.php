@@ -20,10 +20,10 @@ ob_end_flush();
 ?>
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" >
   <head>
-    <meta charset="utf-8">
     <title>Remote Wake/Sleep-On-LAN</title>
+    <meta http-equiv="Content-Type" content="text/html;charset=utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="A utility for remotely waking/sleeping a Windows computer via a Raspberry Pi">
     <meta name="author" content="Jeremy Blum">
@@ -73,49 +73,77 @@ ob_end_flush();
     <!-- Fav and touch icons -->
     <link rel="apple-touch-icon-precomposed" sizes="144x144" href="<?php echo $BOOTSTRAP_LOCATION_PREFIX; ?>bootstrap/ico/apple-touch-icon-144-precomposed.png">
     <link rel="apple-touch-icon-precomposed" sizes="114x114" href="<?php echo $BOOTSTRAP_LOCATION_PREFIX; ?>bootstrap/ico/apple-touch-icon-114-precomposed.png">
-      <link rel="apple-touch-icon-precomposed" sizes="72x72" href="<?php echo $BOOTSTRAP_LOCATION_PREFIX; ?>bootstrap/ico/apple-touch-icon-72-precomposed.png">
-                    <link rel="apple-touch-icon-precomposed" href="<?php echo $BOOTSTRAP_LOCATION_PREFIX; ?>bootstrap/ico/apple-touch-icon-57-precomposed.png">
-                                   <link rel="shortcut icon" href="<?php echo $BOOTSTRAP_LOCATION_PREFIX; ?>bootstrap/ico/favicon.png">
+    <link rel="apple-touch-icon-precomposed" sizes="72x72" href="<?php echo $BOOTSTRAP_LOCATION_PREFIX; ?>bootstrap/ico/apple-touch-icon-72-precomposed.png">
+    <link rel="apple-touch-icon-precomposed" href="<?php echo $BOOTSTRAP_LOCATION_PREFIX; ?>bootstrap/ico/apple-touch-icon-57-precomposed.png">
+    <link rel="shortcut icon" href="<?php echo $BOOTSTRAP_LOCATION_PREFIX; ?>bootstrap/ico/favicon.png">
   </head>
 
   <body>
 
     <div class="container">
-    	<form class="form-signin" method="post">
+    	<form class="form-signin" method="post" action="index1.php">
         	<h3 class="form-signin-heading">
 			<?php
-			
+				//print_r($_POST);
 				$approved_wake = false;
 				$approved_sleep = false;
 				if ( isset($_POST['password']) )
-                {
-                    $hash = hash("sha256", $_POST['password']);
-                    if ($hash == $APPROVED_HASH)
-                    {
-						if ($_POST['submit'] == "wake")
+		                {
+                			$hash = hash("sha256", $_POST['password']);
+			                if ($hash == $APPROVED_HASH)
+			                {
+						if ($_POST['submitbutton'] == "Wake Up!")
 						{
 							$approved_wake = true;
 						}
-						elseif ($_POST['submit'] == "sleep")
+						elseif ($_POST['submitbutton'] == "Sleep!")
 						{
 							$approved_sleep = true;
 						}
 					}
 				}
-			 
-				if ($approved_wake) echo "Waking Up!";
-				elseif ($approved_sleep) echo "Going to Sleep!";
-				else echo "Remote Wake/Sleep-On-LAN";
-			?>
-            </h3>
+
+				$selectedComputer = 0;
+				if ( isset($_POST['computers']))
+				{
+					$selectedComputer = $_POST['computers'];
+				};
+
+			 	echo "Remote Wake/Sleep-On-LAN</h3>";
+				if ($approved_wake) {
+					echo "Waking Up!";
+				} elseif ($approved_sleep) {
+					echo "Going to Sleep!";
+				} else {?>
+				<select name="computers" onchange="this.form.submit()">
+				<?php
+					for ($i = 0; $i < count($COMPUTER_NAME); $i++)
+					{
+						echo "<option value=" . $i;
+						if( $selectedComputer == $i){ echo " selected";};
+						echo ">" . $COMPUTER_NAME[$i] . "</option>";
+			
+					}
+				?>
+				</select>
+				<noscript>
+				<input name="test" type="submit" value="go">
+				</noscript>
+				<?php } ?>
+			
+           
             <?php
-				if (!isset($_POST['submit']) || (isset($_POST['submit']) && !$approved_wake && !$approved_sleep))
+
+				
+				if (!isset($_POST['submitbutton']) || (isset($_POST['submitbutton']) && !$approved_wake && !$approved_sleep))
 				{
 					echo "<h5 id='wait'>Querying Computer State. Please Wait...</h5>";
-					$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP);
-					?><script>
+					$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP[$selectedComputer]);
+	    ?>
+	    				<script>
 						document.getElementById('wait').style.display = 'none';
-                    </script><?php
+				        </script>
+	    <?php
 					if ($pinginfo == "")
 					{
 						$asleep = true;
@@ -133,14 +161,14 @@ ob_end_flush();
                 if ($approved_wake)
                 {
                 	echo "<p>Approved. Sending WOL Command...</p>";
-					exec ('wakeonlan ' . $COMPUTER_MAC);
+					exec ('wakeonlan ' . $COMPUTER_MAC[$selectedComputer]);
 					echo "<p>Command Sent. Waiting for computer to wake up...</p><p>";
 					$count = 1;
 					$down = true;
 					while ($count <= $MAX_PINGS && $down == true)
 					{
 						echo "Ping " . $count . "...";
-						$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP);
+						$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP[$selectedComputer]);
 						$count++;
 						if ($pinginfo != "")
 						{
@@ -151,7 +179,8 @@ ob_end_flush();
 						else
 						{
 							echo "<span style='color:#CC0000;'><b>Still Down.</b></span><br />";
-						}	
+						}
+						sleep($SLEEP_TIME);
 					}
 					echo "</p>";
 					if ($down == true)
@@ -163,7 +192,7 @@ ob_end_flush();
 				{
 					echo "<p>Approved. Sending Sleep Command...</p>";
 					$ch = curl_init();
-					curl_setopt($ch, CURLOPT_URL, "http://" . $COMPUTER_LOCAL_IP . ":" . $COMPUTER_SLEEP_CMD_PORT . "/suspend");
+					curl_setopt($ch, CURLOPT_URL, "http://" . $COMPUTER_LOCAL_IP[$selectedComputer] . ":" . $COMPUTER_SLEEP_CMD_PORT . "/" .  $COMPUTER_SLEEP_CMD);
 					curl_setopt($ch, CURLOPT_TIMEOUT, 5);
 					curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
 					
@@ -179,7 +208,7 @@ ob_end_flush();
 						while ($count <= $MAX_PINGS && $down == false)
 						{
 							echo "Ping " . $count . "...";
-							$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP);
+							$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP[$selectedComputer]);
 							$count++;
 							if ($pinginfo == "")
 							{
@@ -191,7 +220,7 @@ ob_end_flush();
 							{
 								echo "<span style='color:#CC0000;'><b>Still Awake.</b></span><br />";
 							}
-							sleep(3);
+							sleep($SLEEP_TIME);
 						}
 						echo "</p>";
 						if ($down == false)
@@ -210,16 +239,18 @@ ob_end_flush();
                 {
             ?>
         			<input type="password" class="input-block-level" placeholder="Enter Passphrase" name="password">
-                    <?php if ( (isset($_POST['submit']) && $_POST['submit'] == "wake") || (!isset($_POST['submit']) && $asleep) ) {?>
-        				<button class="btn btn-large btn-primary" type="submit" name="submit" value="wake">Wake Up!</button>
+                    <?php if ( (isset($_POST['submitbutton']) && $_POST['submitbutton'] == "wake") || (!isset($_POST['submitbutton']) && $asleep) ) {?>
+        			<input class="btn btn-large btn-primary" type="submit" name="submitbutton" value="Wake Up!"/>
+				<input type="hidden" name="submitbutton" value="Wake Up!"/>  <!-- handle if IE used and enter button pressed instead of wake up button -->
                     <?php } else { ?>
-                    <button class="btn btn-large btn-primary" type="submit" name="submit" value="sleep">Go to Sleep!</button>
-                    <?php } ?>
+		                <input class="btn btn-large btn-primary" type="submit" name="submitbutton" value="Sleep!"/>
+				<input type="hidden" name="submitbutton" value="Sleep!" />  <!-- handle if IE used and enter button pressed instead of sleep button -->
+                    <?php } ?>	
 	
 			<?php
 				}
 			?>
-		</form>            
+		</form>
     </div> <!-- /container -->
     <script src="<?php echo $BOOTSTRAP_LOCATION_PREFIX; ?>bootstrap/js/bootstrap.min.js"></script>
   </body>
