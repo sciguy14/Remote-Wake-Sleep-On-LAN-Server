@@ -20,7 +20,7 @@ ob_end_flush();
 ?>
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" >
   <head>
     <title>Remote Wake/Sleep-On-LAN</title>
     <meta http-equiv="Content-Type" content="text/html;charset=utf-8">
@@ -81,10 +81,10 @@ ob_end_flush();
   <body>
 
     <div class="container">
-    	<form class="form-signin" method="post">
+    	<form class="form-signin" method="post" action="index1.php">
         	<h3 class="form-signin-heading">
 			<?php
-			
+				//print_r($_POST);
 				$approved_wake = false;
 				$approved_sleep = false;
 				if ( isset($_POST['password']) )
@@ -92,11 +92,11 @@ ob_end_flush();
                 			$hash = hash("sha256", $_POST['password']);
 			                if ($hash == $APPROVED_HASH)
 			                {
-						if ($_POST['submitbutton'] == "wake")
+						if ($_POST['submitbutton'] == "Wake Up!")
 						{
 							$approved_wake = true;
 						}
-						elseif ($_POST['submitbutton'] == "sleep")
+						elseif ($_POST['submitbutton'] == "Sleep!")
 						{
 							$approved_sleep = true;
 						}
@@ -110,9 +110,11 @@ ob_end_flush();
 				};
 
 			 	echo "Remote Wake/Sleep-On-LAN</h3>";
-				if ($approved_wake) echo "Waking Up!";
-				elseif ($approved_sleep) echo "Going to Sleep!";
-				else ?>
+				if ($approved_wake) {
+					echo "Waking Up!";
+				} elseif ($approved_sleep) {
+					echo "Going to Sleep!";
+				} else {?>
 				<select name="computers" onchange="this.form.submit()">
 				<?php
 					for ($i = 0; $i < count($COMPUTER_NAME); $i++)
@@ -127,13 +129,13 @@ ob_end_flush();
 				<noscript>
 				<input name="test" type="submit" value="go">
 				</noscript>
-				
+				<?php } ?>
 			
            
             <?php
 
 				
-				if (!isset($_POST['submit']) || (isset($_POST['submit']) && !$approved_wake && !$approved_sleep))
+				if (!isset($_POST['submitbutton']) || (isset($_POST['submitbutton']) && !$approved_wake && !$approved_sleep))
 				{
 					echo "<h5 id='wait'>Querying Computer State. Please Wait...</h5>";
 					$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP[$selectedComputer]);
@@ -237,16 +239,18 @@ ob_end_flush();
                 {
             ?>
         			<input type="password" class="input-block-level" placeholder="Enter Passphrase" name="password">
-                    <?php if ( (isset($_POST['submit']) && $_POST['submit'] == "wake") || (!isset($_POST['submit']) && $asleep) ) {?>
-        			<button class="btn btn-large btn-primary" type="submit" name="submitbutton" value="wake">Wake Up!</button>
+                    <?php if ( (isset($_POST['submitbutton']) && $_POST['submitbutton'] == "wake") || (!isset($_POST['submitbutton']) && $asleep) ) {?>
+        			<input class="btn btn-large btn-primary" type="submit" name="submitbutton" value="Wake Up!"/>
+				<input type="hidden" name="submitbutton" value="Wake Up!"/>  <!-- handle if IE used and enter button pressed instead of wake up button -->
                     <?php } else { ?>
-		                <button class="btn btn-large btn-primary" type="submit" name="submitbutton" value="sleep">Go to Sleep!</button>
-                    <?php } ?>
+		                <input class="btn btn-large btn-primary" type="submit" name="submitbutton" value="Sleep!"/>
+				<input type="hidden" name="submitbutton" value="Sleep!" />  <!-- handle if IE used and enter button pressed instead of sleep button -->
+                    <?php } ?>	
 	
 			<?php
 				}
 			?>
-		</form>            
+		</form>
     </div> <!-- /container -->
     <script src="<?php echo $BOOTSTRAP_LOCATION_PREFIX; ?>bootstrap/js/bootstrap.min.js"></script>
   </body>
