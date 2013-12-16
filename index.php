@@ -81,7 +81,7 @@ ob_end_flush();
   <body>
 
     <div class="container">
-    	<form class="form-signin" method="post" action="index1.php">
+    	<form class="form-signin" method="post" action="index.php">
         	<h3 class="form-signin-heading">
 			<?php
 				//print_r($_POST);
