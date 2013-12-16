@@ -8,6 +8,9 @@ License: GPL v3 (http://www.gnu.org/licenses/gpl.html)
 //You should not need to edit this file. Adjust Parameters in the config file:
 require_once('config.php');
 
+//Set default computer
+if (empty($_GET)) { header('Location: '. "http://$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]" . "?computer=0"); exit; }
+
 //Uncomment to report PHP errors.
 error_reporting(E_ALL);
 ini_set('display_errors', '1');
@@ -81,10 +84,10 @@ ob_end_flush();
   <body>
 
     <div class="container">
-    	<form class="form-signin" method="post" action="index1.php">
+    	<form class="form-signin" method="post">
         	<h3 class="form-signin-heading">
 			<?php
-				//print_r($_POST);
+				//print_r($_POST); //Useful for POST Debugging
 				$approved_wake = false;
 				$approved_sleep = false;
 				if ( isset($_POST['password']) )
@@ -103,11 +106,7 @@ ob_end_flush();
 					}
 				}
 
-				$selectedComputer = 0;
-				if ( isset($_POST['computers']))
-				{
-					$selectedComputer = $_POST['computers'];
-				};
+				$selectedComputer = $_GET['computer'];
 
 			 	echo "Remote Wake/Sleep-On-LAN</h3>";
 				if ($approved_wake) {
@@ -115,20 +114,25 @@ ob_end_flush();
 				} elseif ($approved_sleep) {
 					echo "Going to Sleep!";
 				} else {?>
-				<select name="computers" onchange="this.form.submit()">
-				<?php
-					for ($i = 0; $i < count($COMPUTER_NAME); $i++)
-					{
-						echo "<option value=" . $i;
-						if( $selectedComputer == $i){ echo " selected";};
-						echo ">" . $COMPUTER_NAME[$i] . "</option>";
-			
-					}
-				?>
-				</select>
-				<noscript>
-				<input name="test" type="submit" value="go">
-				</noscript>
+                    <select name="computer" onchange="if (this.value) window.location.href='?computer=' + this.value">
+                    <?php
+                        for ($i = 0; $i < count($COMPUTER_NAME); $i++)
+                        {
+                            echo "<option value='" . $i;
+                            if( $selectedComputer == $i)
+							{
+								echo "' selected>";
+							}
+                            else
+							{
+								echo "'>";
+							}
+							echo $COMPUTER_NAME[$i] . "</option>";
+                
+                        }
+                    ?>
+                    </select>
+
 				<?php } ?>
 			
            
@@ -139,20 +143,20 @@ ob_end_flush();
 				{
 					echo "<h5 id='wait'>Querying Computer State. Please Wait...</h5>";
 					$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP[$selectedComputer]);
-	    ?>
+	    				?>
 	    				<script>
 						document.getElementById('wait').style.display = 'none';
 				        </script>
-	    <?php
+	   					<?php
 					if ($pinginfo == "")
 					{
 						$asleep = true;
-						echo "<h5>The remote computer is presently asleep.</h5>";
+						echo "<h5>" . $COMPUTER_NAME[$selectedComputer] . " is presently asleep.</h5>";
 					}
 					else
 					{
 						$asleep = false;
-						echo "<h5>The remote computer is presently awake.</h5>";
+						echo "<h5>" . $COMPUTER_NAME[$selectedComputer] . " is presently awake.</h5>";
 					}
 				}
 				                
@@ -162,7 +166,7 @@ ob_end_flush();
                 {
                 	echo "<p>Approved. Sending WOL Command...</p>";
 					exec ('wakeonlan ' . $COMPUTER_MAC[$selectedComputer]);
-					echo "<p>Command Sent. Waiting for computer to wake up...</p><p>";
+					echo "<p>Command Sent. Waiting for " . $COMPUTER_NAME[$selectedComputer] . " to wake up...</p><p>";
 					$count = 1;
 					$down = true;
 					while ($count <= $MAX_PINGS && $down == true)
@@ -174,6 +178,7 @@ ob_end_flush();
 						{
 							$down = false;
 							echo "<span style='color:#00CC00;'><b>It's Alive!</b></span><br />";
+							echo "<p><a href='?computer=" . $selectedComputer . "'>Return to the Wake/Sleep Control Home</a></p>";
 							$show_form = false;
 						}
 						else
@@ -185,7 +190,7 @@ ob_end_flush();
 					echo "</p>";
 					if ($down == true)
 					{
-						echo "<p style='color:#CC0000;'><b>FAILED!</b> The remote computer doesn't seem to be waking up... Try again?</p>";
+						echo "<p style='color:#CC0000;'><b>FAILED!</b> " . $COMPUTER_NAME[$selectedComputer] . " doesn't seem to be waking up... Try again?</p><p>(Or <a href='?computer=" . $selectedComputer . "'>Return to the Wake/Sleep Control Home</a>.)</p>";
 					}
 				}
 				elseif ($approved_sleep)
@@ -202,7 +207,7 @@ ob_end_flush();
 					}
 					else
 					{
-						echo "<p><span style='color:#00CC00;'><b>Command Succeeded!</b></span> Waiting for computer to go to sleep...</p><p>";
+						echo "<p><span style='color:#00CC00;'><b>Command Succeeded!</b></span> Waiting for " . $COMPUTER_NAME[$selectedComputer] . " to go to sleep...</p><p>";
 						$count = 1;
 						$down = false;
 						while ($count <= $MAX_PINGS && $down == false)
@@ -214,7 +219,9 @@ ob_end_flush();
 							{
 								$down = true;
 								echo "<span style='color:#00CC00;'><b>It's Asleep!</b></span><br />";
+								echo "<p><a href='?computer=" . $selectedComputer . "'>Return to the Wake/Sleep Control Home</a></p>";
 								$show_form = false;
+								
 							}
 							else
 							{
@@ -225,12 +232,12 @@ ob_end_flush();
 						echo "</p>";
 						if ($down == false)
 						{
-							echo "<p style='color:#CC0000;'><b>FAILED!</b> The remote computer doesn't seem to be falling asleep... Try again?</p>";
+							echo "<p style='color:#CC0000;'><b>FAILED!</b> " . $COMPUTER_NAME[$selectedComputer] . " doesn't seem to be falling asleep... Try again?</p><p>(Or <a href='?computer=" . $selectedComputer . "'>Return to the Wake/Sleep Control Home</a>.)</p>";
 						}
 					}
 					curl_close($ch);
 				}
-				elseif (isset($_POST['submit']))
+				elseif (isset($_POST['submitbutton']))
 				{
 					echo "<p style='color:#CC0000;'><b>Invalid Passphrase. Request Denied.</b></p>";
 				}		
@@ -239,12 +246,12 @@ ob_end_flush();
                 {
             ?>
         			<input type="password" class="input-block-level" placeholder="Enter Passphrase" name="password">
-                    <?php if ( (isset($_POST['submitbutton']) && $_POST['submitbutton'] == "wake") || (!isset($_POST['submitbutton']) && $asleep) ) {?>
-        			<input class="btn btn-large btn-primary" type="submit" name="submitbutton" value="Wake Up!"/>
-				<input type="hidden" name="submitbutton" value="Wake Up!"/>  <!-- handle if IE used and enter button pressed instead of wake up button -->
+                    <?php if ( (isset($_POST['submitbutton']) && $_POST['submitbutton'] == "Wake Up!") || (!isset($_POST['submitbutton']) && $asleep) ) {?>
+        				<input class="btn btn-large btn-primary" type="submit" name="submitbutton" value="Wake Up!"/>
+						<input type="hidden" name="submitbutton" value="Wake Up!"/>  <!-- handle if IE used and enter button pressed instead of wake up button -->
                     <?php } else { ?>
 		                <input class="btn btn-large btn-primary" type="submit" name="submitbutton" value="Sleep!"/>
-				<input type="hidden" name="submitbutton" value="Sleep!" />  <!-- handle if IE used and enter button pressed instead of sleep button -->
+						<input type="hidden" name="submitbutton" value="Sleep!" />  <!-- handle if IE used and enter button pressed instead of sleep button -->
                     <?php } ?>	
 	
 			<?php
