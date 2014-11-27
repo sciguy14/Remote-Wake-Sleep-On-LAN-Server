@@ -7,7 +7,7 @@ How-to Guide
 ------------
 For tech-happy people this is the low down:
 - sudo apt-get install wakeonlan apache2 php5 git php5-curl
-- git clone https://github.com/sciguy14/Remote-Wake-On-LAN-Server.git
+- git clone https://github.com/felixrr/Remote-Wake-Sleep-On-LAN-Server.git
 - sudo chown pi: /var/www
 - sudo mkdir /etc/apache2/ssl
 - sudo openssl genrsa -out /etc/apache2/ssl/wol.key 2048
