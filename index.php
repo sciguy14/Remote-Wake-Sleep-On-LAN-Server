@@ -12,7 +12,7 @@ require_once('config.php');
 //set headers that harden the HTTPS session
 if ($USE_HTTPS)
 {
-   header("strict-transport-security: max-age=7776000"); //HSTS headers set for 90 days
+   header("Strict-Transport-Security: max-age=7776000"); //HSTS headers set for 90 days
 }
 
 // Enable flushing
