@@ -1,0 +1,24 @@
+<VirtualHost *:443>
+        ServerAdmin webmaster@localhost
+
+        SSLEngine On
+        SSLCertificateFile /etc/apache2/ssl/wol.crt
+        SSLCertificateKeyFile /etc/apache2/ssl/wol.key
+
+        DocumentRoot /var/www
+        <Directory /var/www/>
+                AllowOverride None
+                Order allow,deny
+                allow from all
+                Options -Indexes
+        </Directory>
+
+        ErrorLog ${APACHE_LOG_DIR}/ssl_error.log
+
+        # Possible values include: debug, info, notice, warn, error, crit,
+        # alert, emerg.
+        LogLevel error
+
+        CustomLog ${APACHE_LOG_DIR}/ssl_access.log combined
+
+</VirtualHost>
