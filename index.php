@@ -1,24 +1,32 @@
 <?PHP /*
 Remote Wake/Sleep-On-LAN Server
 https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server
-Author: Jeremy E. Blum (http://www.jeremyblum.com)
+Original Author: Jeremy E. Blum (http://www.jeremyblum.com)
+Security Edits By: Felix Ryan (https://www.felixrr.pro)
 License: GPL v3 (http://www.gnu.org/licenses/gpl.html)
 */ 
 
 //You should not need to edit this file. Adjust Parameters in the config file:
 require_once('config.php');
 
-//Set default computer
-if (empty($_GET)) { header('Location: '. "http://$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]" . "?computer=0"); exit; }
+//set headers that harden the HTTPS session
+if ($USE_HTTPS)
+{
+   header("strict-transport-security: max-age=7776000"); //HSTS headers set for 90 days
+}
 
-//Uncomment to report PHP errors.
-error_reporting(E_ALL);
-ini_set('display_errors', '1');
-			
 // Enable flushing
 ini_set('implicit_flush', true);
 ob_implicit_flush(true);
 ob_end_flush();
+
+//Set default computer (this is business logic so should be done last)
+if (empty($_GET))
+{
+   header('Location: '. ($USE_HTTPS ? "https://" : "http://") . "$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]" . "?computer=0"); exit;
+}
+else
+   $_GET['computer'] = preg_replace("/[^0-9,.]/", "", $_GET['computer']);
 
 ?>
 
@@ -134,11 +142,8 @@ ob_end_flush();
                     </select>
 
 				<?php } ?>
-			
-           
             <?php
 
-				
 				if (!isset($_POST['submitbutton']) || (isset($_POST['submitbutton']) && !$approved_wake && !$approved_sleep))
 				{
 					echo "<h5 id='wait'>Querying Computer State. Please Wait...</h5>";
@@ -159,9 +164,9 @@ ob_end_flush();
 						echo "<h5>" . $COMPUTER_NAME[$selectedComputer] . " is presently awake.</h5>";
 					}
 				}
-				                
+
                 $show_form = true;
-                
+
                 if ($approved_wake)
                 {
                 	echo "<p>Approved. Sending WOL Command...</p>";
@@ -245,7 +250,7 @@ ob_end_flush();
                 if ($show_form)
                 {
             ?>
-        			<input type="password" class="input-block-level" placeholder="Enter Passphrase" name="password">
+        			<input type="password" autocomplete=off class="input-block-level" placeholder="Enter Passphrase" name="password">
                     <?php if ( (isset($_POST['submitbutton']) && $_POST['submitbutton'] == "Wake Up!") || (!isset($_POST['submitbutton']) && $asleep) ) {?>
         				<input class="btn btn-large btn-primary" type="submit" name="submitbutton" value="Wake Up!"/>
 						<input type="hidden" name="submitbutton" value="Wake Up!"/>  <!-- handle if IE used and enter button pressed instead of wake up button -->
