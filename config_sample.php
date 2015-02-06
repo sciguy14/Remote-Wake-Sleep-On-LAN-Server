@@ -10,7 +10,7 @@
 	*/
 
 	//Set the below to "true" to enforce HTTPS connections (don't forget to create a self-signed cert and enable it in Apache2)
-	$USE_HTTPS = "true";
+	$USE_HTTPS = "false";
 
 	//Choose a passphrase and find the sha256 hash of that passphrase.
 	//You can use an online calculator to generate the hash: http://www.xorbin.com/tools/sha256-hash-calculator.
