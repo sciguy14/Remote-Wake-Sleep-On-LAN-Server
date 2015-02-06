@@ -38,7 +38,7 @@ At this point you will need to edit the config.php file to give it a value for "
 
 You will also likely want to port forward from your router to the Pi so that this service is accessible externally.
 
-And finally, a short warning that self-signed certificates are not perfect.  They will likely cause an warning message in your browser.  This is because the certificate is not linked to a trusted certificate authority (CA).  The implications of this are that a Man-in-the-Middle attacker could theoretically insert a certificate that they control into your communication with the Pi and as a result would be able to read the encrypted messages being transferred.  In summary, encryption using a self-signed certificate is not perfect, but better than none at all.
+And finally, a short warning that self-signed certificates are not perfect.  They will likely cause a warning message in your browser.  This is because the certificate is not linked to a trusted certificate authority (CA).  The implications of this are that a Man-in-the-Middle attacker could theoretically insert a certificate that they control into your communication with the Pi and as a result would be able to read the encrypted messages being transferred.  In summary, encryption using a self-signed certificate is not perfect, but better than none at all.
 
 License
 -------
