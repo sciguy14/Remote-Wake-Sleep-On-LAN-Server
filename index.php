@@ -20,10 +20,18 @@ ini_set('implicit_flush', true);
 ob_implicit_flush(true);
 ob_end_flush();
 
+//Set the correct protocol
+if ($USE_HTTPS && !$_SERVER['HTTPS'])
+{
+   header("Location: https://$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]");
+   exit;
+}
+
 //Set default computer (this is business logic so should be done last)
 if (empty($_GET))
 {
-   header('Location: '. ($USE_HTTPS ? "https://" : "http://") . "$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]" . "?computer=0"); exit;
+   header('Location: '. ($USE_HTTPS ? "https://" : "http://") . "$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]" . "?computer=0");
+   exit;
 }
 else
    $_GET['computer'] = preg_replace("/[^0-9,.]/", "", $_GET['computer']);
