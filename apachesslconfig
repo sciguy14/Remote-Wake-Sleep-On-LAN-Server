@@ -1,0 +1,21 @@
+<IfModule mod_ssl.c>
+SSLRandomSeed startup builtin
+SSLRandomSeed startup file:/dev/urandom 512
+SSLRandomSeed connect builtin
+SSLRandomSeed connect file:/dev/urandom 512
+
+AddType application/x-x509-ca-cert .crt
+AddType application/x-pkcs7-crl    .crl
+
+SSLPassPhraseDialog  builtin
+
+SSLSessionCache        shmcb:${APACHE_RUN_DIR}/ssl_scache(512000)
+SSLSessionCacheTimeout  300
+
+SSLMutex  file:${APACHE_RUN_DIR}/ssl_mutex
+
+SSLCipherSuite HIGH:!MEDIUM:!LOW:!aNULL:!MD5
+
+SSLProtocol all -SSLv2 -SSLv3
+
+</IfModule>
