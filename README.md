@@ -1,13 +1,13 @@
 REMOTE WAKE/SLEEP-ON-LAN SERVER
 =========================
-This is a simple webapp that runs on your Raspberry Pi to turn it into a remotely accessible Wake/Sleep-On-LAN Server.  This is very useful when you have high-powered machine that you don't want to keep on all the time, but that you want to keep remotely accessible for Remote Desktop, SSH, FTP, etc.  The original author made a very detailed guide which can be found at his website:
+This is a simple webapp that runs on your Raspberry Pi to turn it into a remotely accessible Wake/Sleep-On-LAN Server.  This is very useful when you have high-powered machine that you don't want to keep on all the time, but that you want to keep remotely accessible for Remote Desktop, SSH, FTP, etc.  A detailed guide on how this software works, how to set it up, and more is available at my website. A how-to guide is also provided below:
 [http://www.jeremyblum.com/2013/07/14/rpi-wol-server/](http://www.jeremyblum.com/2013/07/14/rpi-wol-server/)
 
 How-to Guide
 ------------
 For tech-happy and not-so-tech-happy people this is the low down:
 - sudo apt-get install wakeonlan apache2 php5 git php5-curl
-- git clone https://github.com/felixrr/Remote-Wake-Sleep-On-LAN-Server.git
+- git clone https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server.git
 - sudo chown pi: /var/www
 
 You may not want TLS/SSL encryption (though it is recommended), if so skip the next few lines
@@ -40,7 +40,7 @@ If you skipped TLS/SSL start again here, if you didn't skip you still need the f
 
 At this point you will need to edit the config.php file to give it a value for "$APPROVED_HASH" and optionally turn on SSL enforcing (recommended).
 
-You will also likely want to port forward from your router to the Pi so that this service is accessible externally.  If you are using TLS/SSL you most likely want your port forward to point to TCP/443 on the Pi, if unencrypted you probably want TCP/80.
+You will also likely want to port forward from your router to the Pi so that this service is accessible externally.  If you are using TLS/SSL you most likely want your port forward to point to TCP/443 on the Pi, if unencrypted you probably want TCP/80. More details about how to do that are included in the tutorial on my blog.
 
 And finally, a short warning that self-signed certificates are not perfect.  They will likely cause a warning message in your browser.  This is because the certificate is not linked to a trusted certificate authority (CA).  The implications of this are that a Man-in-the-Middle attacker could theoretically insert a certificate that they control into your communication with the Pi and as a result would be able to read the encrypted messages being transferred.  In summary, encryption using a self-signed certificate is not perfect, but better than none at all.
 

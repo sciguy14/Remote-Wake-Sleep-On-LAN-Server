@@ -9,7 +9,7 @@
 	UPDATE THE VALUES IN THIS FILE AND CHANGE THE NAME TO: "config.php"
 	*/
 
-	//Set the below to "true" to enforce HTTPS connections (don't forget to create a self-signed cert and enable it in Apache2)
+	//Set the below to "true" (no quotes) to enforce HTTPS connections (don't forget to create a self-signed cert and enable it in Apache2)
 	$USE_HTTPS = false;
 
 	//Choose a passphrase and find the sha256 hash of that passphrase.
