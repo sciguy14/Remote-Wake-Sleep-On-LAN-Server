@@ -5,18 +5,18 @@ This is a simple webapp that runs on your Raspberry Pi to turn it into a remotel
 
 How-to Guide
 ------------
-For tech-happy and not-so-tech-happy people this is the low down:
-- sudo apt-get install wakeonlan apache2 php5 git php5-curl
+First, we've gotta install the right packages and clone this repository:
+- sudo apt-get install wakeonlan apache2 php5 git php5-curl libapache2-mod-php5
 - git clone https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server.git
 - sudo chown pi: /var/www
 
-You may not want TLS/SSL encryption (though it is recommended), if so skip the next few lines
+Enabling TLS/SSL encryption is recommended, but not required. If you don't want encryption, you can skip the next few steps. If you do want to enable encryption, complete the following steps:
 
 - sudo mkdir /etc/apache2/ssl
 - sudo openssl genrsa -out /etc/apache2/ssl/wol.key 2048
 - sudo openssl req -new -key /etc/apache2/ssl/wol.key -out /etc/apache2/ssl/wol.csr
 
-At this point you will be asked some questions, most of which have no impact on the running of your service.  However, the "Common Name" should be the name of any DNS you have setup, so for example "wol.home.com" and the password should be left blank in order for the Pi to be able to load it on boot without you entering a password.
+At this point you will be asked some questions, most of which have no impact on the running of your service.  However, the "Common Name" should be the name of any DNS you have setup, so for example "wol.example.com" and the password should be left blank in order for the Pi to be able to load it on boot without you entering a password.
 
 - sudo openssl x509 -req -days 10 -in /etc/apache2/ssl/wol.csr -signkey /etc/apache2/ssl/wol.key -out /etc/apache2/ssl/wol.crt
 - sudo mv -f Remote-Wake-Sleep-On-LAN-Server/apachesslconfig /etc/apache2/mods-available/ssl.conf
@@ -38,7 +38,7 @@ If you skipped TLS/SSL start again here, if you didn't skip you still need the f
 - mv /var/www/config_sample.php /var/www/config.php
 - nano /var/www/config.php
 
-At this point you will need to edit the config.php file to give it a value for "$APPROVED_HASH" and optionally turn on SSL enforcing (recommended).
+At this point you will need to edit the config.php file to give it a value for "$APPROVED_HASH" and optionally turn on SSL enforcing (do this if you followed the above steps to enable encryption by setting $USE_HTTPS  to true).
 
 You will also likely want to port forward from your router to the Pi so that this service is accessible externally.  If you are using TLS/SSL you most likely want your port forward to point to TCP/443 on the Pi, if unencrypted you probably want TCP/80. More details about how to do that are included in the tutorial on my blog.
 
