@@ -6,6 +6,8 @@ Security Edits By: Felix Ryan (https://www.felixrr.pro)
 License: GPL v3 (http://www.gnu.org/licenses/gpl.html)
 */ 
 
+
+
 //You should not need to edit this file. Adjust Parameters in the config file:
 require_once('config.php');
 
@@ -106,20 +108,12 @@ else
 				//print_r($_POST); //Useful for POST Debugging
 				$approved_wake = false;
 				$approved_sleep = false;
-				if ( isset($_POST['password']) )
-		                {
-                			$hash = hash("sha256", $_POST['password']);
-			                if ($hash == $APPROVED_HASH)
-			                {
-						if ($_POST['submitbutton'] == "Wake Up!")
-						{
-							$approved_wake = true;
-						}
-						elseif ($_POST['submitbutton'] == "Sleep!")
-						{
-							$approved_sleep = true;
-						}
-					}
+				if (isset($_POST['submitbutton']) && $_POST['submitbutton'] == "Wake Up!")
+				{
+					$approved_wake = true;
+				}
+				elseif (isset($_POST['submitbutton']) && $_POST['submitbutton'] == "Sleep!") {
+					$approved_sleep = true;
 				}
 
 				$selectedComputer = $_GET['computer'];
@@ -250,15 +244,15 @@ else
 					}
 					curl_close($ch);
 				}
-				elseif (isset($_POST['submitbutton']))
-				{
-					echo "<p style='color:#CC0000;'><b>Invalid Passphrase. Request Denied.</b></p>";
-				}		
+				//elseif (isset($_POST['submitbutton']))
+				//{
+				//	echo "<p style='color:#CC0000;'><b>Invalid Passphrase. Request Denied.</b></p>";
+				//}		
                 
                 if ($show_form)
                 {
             ?>
-        			<input type="password" autocomplete=off class="input-block-level" placeholder="Enter Passphrase" name="password">
+        			<!-- <input type="password" autocomplete=off class="input-block-level" placeholder="Enter Passphrase" name="password"> -->
                     <?php if ( (isset($_POST['submitbutton']) && $_POST['submitbutton'] == "Wake Up!") || (!isset($_POST['submitbutton']) && $asleep) ) {?>
         				<input class="btn btn-large btn-primary" type="submit" name="submitbutton" value="Wake Up!"/>
 						<input type="hidden" name="submitbutton" value="Wake Up!"/>  <!-- handle if IE used and enter button pressed instead of wake up button -->
