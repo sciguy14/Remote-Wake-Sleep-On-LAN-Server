@@ -1,5 +1,5 @@
 Header set X-Content-Type-Options: "nosniff"
 Header set X-XSS-Protection: "1; mode=block"
 Header set X-Frame-Options: "deny"
-#Header set Cache-control: no-cache, no-store
+Header set Cache-control: no-cache, no-store
 Header set Pragma: no-cache
