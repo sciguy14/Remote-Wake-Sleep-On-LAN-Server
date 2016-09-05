@@ -1,4 +1,4 @@
-<?PHP /*
+<?php /*
 Remote Wake/Sleep-On-LAN Server
 https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server
 Original Author: Jeremy E. Blum (http://www.jeremyblum.com)
