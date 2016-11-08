@@ -209,14 +209,12 @@ else
 				elseif ($approved_sleep)
 				{
 					echo "<p>Approved. Sending Sleep Command...</p>";
-					$ch = curl_init();
-					curl_setopt($ch, CURLOPT_URL, "http://" . $COMPUTER_LOCAL_IP[$selectedComputer] . ":" . $COMPUTER_SLEEP_CMD_PORT . "/" .  $COMPUTER_SLEEP_CMD);
-					curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-					curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
 					
-					if (curl_exec($ch) === false)
+					$cmd = sprintf($COMPUTER_SLEEP_CMD_FORMAT . " 2>&1 >/dev/null", $COMPUTER_LOCAL_IP[$selectedComputer]);
+					exec($cmd, $output, $code);
+					if ($code != 0)
 					{
-						echo "<p><span style='color:#CC0000;'><b>Command Failed:</b></span> " . curl_error($ch) . "</p>";
+						echo "<p><span style='color:#CC0000;'><b>Command Failed:</b></span> " . join('<br>', $output) . "</p>";
 					}
 					else
 					{
@@ -248,7 +246,6 @@ else
 							echo "<p style='color:#CC0000;'><b>FAILED!</b> " . $COMPUTER_NAME[$selectedComputer] . " doesn't seem to be falling asleep... Try again?</p><p>(Or <a href='?computer=" . $selectedComputer . "'>Return to the Wake/Sleep Control Home</a>.)</p>";
 						}
 					}
-					curl_close($ch);
 				}
 				elseif (isset($_POST['submitbutton']))
 				{
