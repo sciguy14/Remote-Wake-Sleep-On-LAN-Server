@@ -27,6 +27,46 @@ if ($USE_HTTPS && !$_SERVER['HTTPS'])
    exit;
 }
 
+//function to show warnings
+function warning($msg) { 
+	$script = "<script type='text/javascript'>$('#warning').fadeIn(1000);</script>";
+	$script .= "<script type='text/javascript'>$('#warning').html('<strong>Warning!</strong> $msg');</script>";
+	return $script;
+}
+
+//check if wol application (either wol or awake) is installed and set wol application to be used (e.g. for use with alpine & awake instead of wol)
+$wol_apps = [ "wakeonlan", "awake" ];//could be extended
+foreach ($wol_apps as $app) {
+  if (exec("command -v ".$app)<>"")
+  {
+    $wol = $app;//set the first application from the array that returns a non empty string as the wol application to be used
+    break;
+  }
+  if ($app === end($wol_apps))
+  {
+    $apps = implode(', ', $wol_apps);
+    $script = warning("unable to find any wol app, been looking for: <strong>".$apps."</strong> (one is necessary).<br>install one e.g. by running <strong>apt-get install wakeonlan</strong> or <strong>apk add awake</strong> (on the server)");//if non of the apps from the array are installed show a warning
+  }
+}
+
+//check if ping application is installed & working
+$ping_apps = [ "ping" ];//could be extended
+foreach ($ping_apps as $app) {
+  if (exec("command -v ".$app)<>"")
+  {
+    break;//just check it exists
+  }
+  if ($app === end($ping_apps))
+  {
+	$apps = implode(', ', $ping_apps);
+    $script = warning("Unable to find any ping app, been looking for: <strong>".$apps."</strong> (one is necessary).<br>Install one e.g. by running <strong>apt-get install iputils-ping</strong> or <strong>apk add iputils</strong> (on the server)");//if non of the apps from the array are installed show a warning
+  }
+}
+if (exec("ping -c 1 127.0.0.1 > /dev/null && echo $?")=="")
+{
+  $script = warning("The ping command is not working correctly. I tested this by pinging 127.0.0.1. This could be caused by a rights problem (are you root). An easy fix is usually to install iputils (apt-get install iputils-ping, apk add iputils");//if non of the apps from the array are installed show a warning
+}
+
 //Set default computer (this is business logic so should be done last)
 if (empty($_GET))
 {
@@ -47,6 +87,9 @@ else
     <meta name="description" content="A utility for remotely waking/sleeping a Windows computer via a Raspberry Pi">
     <meta name="author" content="Jeremy Blum">
 
+	<!-- jQuery -->
+	<script src="include/jquery-3.3.1.min.js"></script>
+	
     <!-- Le styles -->
     <link href="<?php echo $BOOTSTRAP_LOCATION_PREFIX; ?>bootstrap/css/bootstrap.css" rel="stylesheet">
     <style type="text/css">
@@ -178,7 +221,13 @@ else
                 if ($approved_wake)
                 {
                 	echo "<p>Approved. Sending WOL Command...</p>";
-					exec ('wakeonlan ' . $COMPUTER_MAC[$selectedComputer]);
+					if ($wol == "wakeonlan") {																  
+						exec ('wakeonlan ' . $COMPUTER_MAC[$selectedComputer]);
+					} elseif ($wol == "awake") {
+						exec ('awake -d ' . $COMPUTER_LOCAL_IP[$selectedComputer] . " " . $COMPUTER_MAC[$selectedComputer]);//for awake the broadcast didn't seem to work
+					} else {
+						warning("Not possible! No wol application installed on server.");//if non of the apps from the array are installed show a warning
+					}
 					echo "<p>Command Sent. Waiting for " . $COMPUTER_NAME[$selectedComputer] . " to wake up...</p><p>";
 					$count = 1;
 					$down = true;
@@ -271,7 +320,10 @@ else
 				}
 			?>
 		</form>
+		<div class="alert alert-warning" id="warning" style="display: none;">
+		</div>																	   
     </div> <!-- /container -->
     <script src="<?php echo $BOOTSTRAP_LOCATION_PREFIX; ?>bootstrap/js/bootstrap.min.js"></script>
+<?php echo $script;?>					 
   </body>
 </html>
