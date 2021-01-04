@@ -10,6 +10,10 @@ For more info, see [my blog post about RWSOLS](http://www.jeremyblum.com/2013/07
   
 If you're having problems with getting RWSOLS working, check the [FAQ](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Notes-and-FAQs) first, or [the comments](http://www.jeremyblum.com/2013/07/14/rpi-wol-server/#comments) on my blog. If you still can't get it to work, please [create a GitHub issue](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/issues) with specific details.
 
+Docker Image (Alternate Installation Option)
+--------------------------------------------
+GitHub user [ex0nuss](https://github.com/ex0nuss) has created a Docker Image for RWSOLS, that you may wish to try out. I have not independently validated its functionality, but it does pull directly from this Repo. You may find the setup of a Docker image to be faster and easier than following the instructions in the Wiki to do a native installation of this application. You can find the GitHub Repo for the Docker Image [here](https://github.com/ex0nuss/Remote-Wake-Sleep-On-LAN-Docker), and the DockerHub link [here](https://hub.docker.com/r/ex0nuss/remote-wake-sleep-on-lan-docker).
+
 License
 -------
 This work is licensed under the [GNU GPL v3](http://www.gnu.org/licenses/gpl.html).
