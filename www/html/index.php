@@ -1,7 +1,7 @@
 <?php /*
 Remote Wake/Sleep-On-LAN Server
 https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server
-Original Author: Jeremy E. Blum (http://www.jeremyblum.com)
+Original Author: Jeremy E. Blum (https://www.jeremyblum.com)
 Security Edits By: Felix Ryan (https://www.felixrr.pro)
 License: GPL v3 (http://www.gnu.org/licenses/gpl.html)
 */ 
@@ -106,20 +106,24 @@ else
 				//print_r($_POST); //Useful for POST Debugging
 				$approved_wake = false;
 				$approved_sleep = false;
+
+
 				if ( isset($_POST['password']) )
-		                {
-                			$hash = hash("sha256", $_POST['password']);
-			                if ($hash == $APPROVED_HASH)
-			                {
-						if ($_POST['submitbutton'] == "Wake Up!")
-						{
-							$approved_wake = true;
-						}
-						elseif ($_POST['submitbutton'] == "Sleep!")
-						{
-							$approved_sleep = true;
-						}
-					}
+                {
+                    if (!is_null($APPROVED_HASH))
+                    {
+                        if (password_verify($_POST['password'], $APPROVED_HASH))
+    	                {
+    						if ($_POST['submitbutton'] == "Wake Up!")
+    						{
+    							$approved_wake = true;
+    						}
+    						elseif ($_POST['submitbutton'] == "Sleep!")
+    						{
+    							$approved_sleep = true;
+    						}
+    					}
+                    }
 				}
 
 				$selectedComputer = $_GET['computer'];

@@ -1,0 +1,4 @@
+hello?
+
+This file is used by the RWSOLS installer script to check for server accessibility during certificate setup. Do not change this file.
+https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server
