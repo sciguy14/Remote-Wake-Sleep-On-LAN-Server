@@ -384,8 +384,8 @@ def _07_server_check():
     # RWSOLS is not currently accessible
     else:
         print("In order to automatically configure SSL Encryption, port 80 must be open on your router and forwarded to port 80 on this Pi.")
-        print("If you are unable to forward port 80 because you are using it for another service, or because your ISP blocks it, you can configure certbot to perform a DNS challenge instead, or this script can setup unsigned encryption.")
-        c, _ = multi_choice('How would you like to proceed?', [exit_and_fix_option_text , self_signed_encryption_text, no_encryption_option_text])
+        print("If you are unable to forward port 80 because you are using it for another service, or because your ISP blocks it, you can manually configure certbot to perform a DNS challenge instead, or this script can setup unsigned encryption.")
+        c, _ = multi_choice('How would you like to proceed?', [exit_and_fix_option_text , self_signed_encryption_option_text, no_encryption_option_text])
         if c == 1:
             local_ip = get_local_ip()
             if local_ip:
