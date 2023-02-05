@@ -2,6 +2,7 @@
 
 # Remote Wake/Sleep-On-LAN Server [SETUP SCRIPT]
 # https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server
+# (c) 2023 Blum Idea Labs, LLC.
 # Author: Jeremy E. Blum (https://www.jeremyblum.com)
 # License: GPL v3 (http://www.gnu.org/licenses/gpl.html)
 
