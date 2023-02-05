@@ -133,7 +133,7 @@ def run_step(handle, description, dot_file_skippable=True):
 def _01_install_prereqs():
     try:
         subprocess.run(['sudo', 'apt-get', 'update'], check=True)
-        subprocess.run(['sudo', 'apt-get', '-y', 'install', 'wakeonlan', 'git', 'apache2', 'php7.3', 'php7.3-curl', 'libapache2-mod-php7.3', 'snapd'], check=True)
+        subprocess.run(['sudo', 'apt-get', '-y', 'install', 'wakeonlan', 'git', 'apache2', 'php7.4', 'php7.4-curl', 'libapache2-mod-php7.4', 'snapd'], check=True)
         subprocess.run(['sudo', 'snap', 'install', 'core'], check=True)
         subprocess.run(['sudo', 'snap', 'refresh', 'core'], check=True)
         subprocess.run(['sudo', 'apt-get', '-y', 'remove', 'certbot']) #Remove any existing installations from package managers
