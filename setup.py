@@ -762,11 +762,9 @@ def rwsols_serving_status():
     except ValueError as e:
         print(yellow("The HTTP URL is of an invalid format."))
     except urllib.error.HTTPError as e:
-        print(yellow("Couldn't connect to the server on port 80 (HTTP Error)."))
-        print(yellow(str(e)))
+        print(yellow(f"Couldn't connect to port 80 due to a HTTP Error ({str(e)})."))
     except urllib.error.URLError as e:
-        print(yellow("Couldn't connect to the server on port 80 (URL Error)."))
-        print(yellow(str(e)))
+        print(yellow(f"Couldn't connect to port 80 due to a URL Error ({str(e)})."))
     else:
         http_server = True
         if txt.startswith("hello?"):
@@ -781,12 +779,10 @@ def rwsols_serving_status():
     except ValueError as e:
         print(yellow("The HTTPS URL is of an invalid format."))
     except urllib.error.HTTPError as e:
-        print(yellow("Couldn't connect to the server on port 443 (HTTP Error)."))
-        print(yellow(str(e)))
+        print(yellow(f"Couldn't connect to port 443 due to an HTTP Error ({str(e)})."))
     except (urllib.error.URLError, ssl.SSLCertVerificationError) as e:
-        print(yellow("Couldn't to connect to a server at port 443 with strict checking for signed certs."))
-        # print(yellow(str(e)))
-        # There was a SSL Cert Error, which means that it still might active here with a self-signed cert
+        print(yellow("Couldn't to connect to port 443 with strict checking for signed certs."))
+        # There was a SSL Cert Error, which means that it still might work with a self-signed cert
         # So, we check again, after allow self-signed certs:
         try:
             self_signed_ssl_context = ssl.create_default_context()
@@ -796,13 +792,11 @@ def rwsols_serving_status():
         except ValueError as e:
             print(yellow("The HTTPs URL is of an invalid format."))
         except urllib.error.HTTPError as e:
-            print(yellow("Couldn't connect to the server on port 443, even when allowing self-signed certs (HTTP Error)"))
-            print(yellow(str(e)))
+            print(yellow(f"Couldn't connect to port 443, even when allowing self-signed certs, due to a HTTP Error ({str(e)})"))
         except urllib.error.URLError as e:
-            print(yellow("Couldn't connect to the server on port 443, even when allowing self-signed certs (URL Error)."))
-            print(yellow(str(e)))
+            print(yellow(f"Couldn't connect to port 443, even when allowing self-signed certs, due to a URL Error ({str(e)})."))
         except ssl.SSLError as e:
-            print(yellow("An SSL error was encountered while trying to check if the server would respond (with self-signed certs allowed)."))
+            print(yellow("The following SSL error was encountered while trying to check if the server would respond (with self-signed certs allowed):"))
             print(yellow(str(e)))
         else:
             https_server = True
@@ -812,7 +806,7 @@ def rwsols_serving_status():
             else:
                 print(yellow("Something was found at " + urls[0] + " port 443, but it was not RWSOLS."))
     except ssl.SSLError as e:
-            print(yellow("An SSL error was encountered while trying to verify the server."))
+            print(yellow("The following SSL error was encountered while trying to verify the server:"))
             print(yellow(str(e)))
     else:
         https_server = True
