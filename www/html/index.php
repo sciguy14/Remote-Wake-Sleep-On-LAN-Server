@@ -100,42 +100,53 @@ else
   <body>
 
     <div class="container">
+    	<?php
+    		$approved = false;
+			$wake_up = false;
+			$go_to_sleep = false;
+			$check_current_status = false;
+
+			if ( isset($_POST['password']) )
+            {
+                if (!is_null($APPROVED_HASH))
+                {
+                    if (password_verify($_POST['password'], $APPROVED_HASH))
+	                {
+						if ($_POST['submitbutton'] == "Wake Up!")
+						{
+							$approved = true;
+							$wake_up = true;
+						}
+						elseif ($_POST['submitbutton'] == "Sleep!")
+						{
+							$approved = true;
+							$go_to_sleep = true;
+						}
+						elseif ($_POST['submitbutton'] == "Check Status")
+						{
+							$approved = true;
+							$check_current_status = true;
+						}
+					}
+                }
+			}
+
+			$selectedComputer = $_GET['computer'];
+
+			# Add $DEBUG = true; to config file to include this debugging output.
+    		if ( isset($DEBUG) && $DEBUG == true )
+    		{
+	    		echo "<pre>";
+	    		echo print_r($_POST, true);
+	    		echo "Approved: ";
+	    		echo $approved ? 'true' : 'false';
+	    		echo "</pre>";
+    		}
+    	?>
     	<form class="form-signin" method="post">
         	<h3 class="form-signin-heading">
 			<?php
-				//print_r($_POST); //Useful for POST Debugging
-				$approved = false;
-				$wake_up = false;
-				$go_to_sleep = false;
-				$check_current_status = false;
-
-
-				if ( isset($_POST['password']) )
-                {
-                    if (!is_null($APPROVED_HASH))
-                    {
-                        if (password_verify($_POST['password'], $APPROVED_HASH))
-    	                {
-    						if ($_POST['submitbutton'] == "Wake Up!")
-    						{
-    							$approved = true;
-    							$wake_up = true;
-    						}
-    						elseif ($_POST['submitbutton'] == "Sleep!")
-    						{
-    							$approved = true;
-    							$go_to_sleep = true;
-    						}
-    						elseif ($_POST['submitbutton'] == "Check Status")
-    						{
-    							$approved = true;
-    							$check_current_status = true;
-    						}
-    					}
-                    }
-				}
-
-				$selectedComputer = $_GET['computer'];
+				
 
 			 	echo "Remote Wake/Sleep-On-LAN</h3>";
 				if ($wake_up) {
@@ -274,7 +285,7 @@ else
                 if ($show_form)
                 {
             ?>
-        			<input type="password" autocomplete=off class="input-block-level" placeholder="Enter Passphrase" name="password">
+        			<input type="password" autocomplete=off class="input-block-level" placeholder="Enter Passphrase" <?php if (isset($approved) && $approved == true) {echo "value='" . $_POST['password'] . "'";} ?> name="password">
         			<?php if ( !isset($_POST['submitbutton']) || ($approved == false) ) { ?>
         			    <input class="btn btn-large btn-primary" type="submit" name="submitbutton" value="Check Status"/>
 						<input type="hidden" name="submitbutton" value="Check Status" />  <!-- handle if IE used and enter button pressed instead of sleep button -->
