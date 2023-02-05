@@ -269,10 +269,10 @@ def _05_get_ip():
     except urllib.error.URLError as e:
         if hasattr(e, 'reason'):
             print(yellow('Failed to reach the ident.me server.'))
-            print(yellow('Reason: ' + e.reason))
+            print(yellow('Reason: ' + str(e.reason)))
         elif hasattr(e, 'code'):
             print(yellow('The ident.me server couldn\'t fulfill the request.'))
-            print(yellow('Error code: ' + e.code))
+            print(yellow('Error code: ' + str(e.code)))
         return False
     print("The public-facing IPv4 address of this Pi's network was detected as " + cyan(public_ipv4) + ".")
     return True
