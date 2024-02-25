@@ -2,7 +2,7 @@
 
 # Remote Wake/Sleep-On-LAN Server [SETUP SCRIPT]
 # https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server
-# (c) 2023 Blum Idea Labs, LLC.
+# (c) 2024 Blum Idea Labs, LLC.
 # Author: Jeremy E. Blum (https://www.jeremyblum.com)
 # License: GPL v3 (http://www.gnu.org/licenses/gpl.html)
 
@@ -33,7 +33,7 @@ public_ipv4 = "127.0.0.1"
 urls = []
 encryption_mode="none" # Options: "none","self","certbot","skip"
 ddns_temp_config=pathlib.Path('/tmp/ddclient.conf')
-ddns_real_config=pathlib.Path('/var/snap/ddclient-snap/current/etc/ddclient/ddclient.conf')
+ddns_real_config=pathlib.Path('/etc/ddclient.conf')
 rwsols_config_sample = script_dir.joinpath('www/html/config_sample.php')
 rwsols_config_user = script_dir.joinpath('www/html/config.php')
 
@@ -56,7 +56,7 @@ def main():
     print(cyan(">>>                                                       <<<\n"))
 
     # Warn the user that internet scripts are dangerous
-    print(yellow("This script will install the required packages and configure permissions as necessary for RWSOLS to work properly."))
+    print(yellow("This script will install the required packages and configure permissions as necessary for RWSOLS to work properly. It assumes you are on the bookworm release."))
     print(yellow("As with all scripts that you find on the internet, I strongly suggest you read its contents before blindly executing it."))
     print(yellow("This script assumes your user is a passwordless sudo user, which is the default for the 'pi' user on Raspbian. It executes commands with sudo.\n"))
     print(yellow("If you want to abort this script to inspect its contents, press Ctrl+C now."))
@@ -133,11 +133,19 @@ def run_step(handle, description, dot_file_skippable=True):
 # Setup Step 1: Install Prequisite Software
 def _01_install_prereqs():
     try:
+        # Update the APT Cache
         subprocess.run(['sudo', 'apt-get', 'update'], check=True)
-        subprocess.run(['sudo', 'apt-get', '-y', 'install', 'wakeonlan', 'git', 'apache2', 'php7.4', 'php7.4-curl', 'libapache2-mod-php7.4', 'snapd'], check=True)
+
+        # Use the latest available php version.
+        php_pkg = subprocess.run("apt-cache search --names-only ^php[0-9]+\.[0-9]+$ | awk '{print $1}", shell=True, check=True)
+        php_curl_pkg = subprocess.run("apt-cache search --names-only ^php[0-9]+\.[0-9]+\-curl$ | awk '{print $1}", shell=True, check=True)
+        php_apache_pkg = subprocess.run("apt-cache search --names-only ^libapache2-mod-php[0-9]+\.[0-9]+$ | awk '{print $1}", shell=True, check=True)
+
+        # Install packages
+        subprocess.run(['sudo', 'apt-get', '-y', 'install', 'wakeonlan', 'git', 'apache2', php_pkg, php_curl_pkg, php_apache_pkg, 'snapd'], check=True)
         subprocess.run(['sudo', 'snap', 'install', 'core'], check=True)
         subprocess.run(['sudo', 'snap', 'refresh', 'core'], check=True)
-        subprocess.run(['sudo', 'apt-get', '-y', 'remove', 'certbot']) #Remove any existing installations from package managers
+        subprocess.run(['sudo', 'apt-get', '-y', 'remove', 'certbot']) # Remove any existing installations from package managers
         subprocess.run(['sudo', 'snap', 'install', '--classic', 'certbot'], check=True)
         subprocess.run(['sudo', 'ln', '-sf', '/snap/bin/certbot', '/usr/bin/certbot'], check=True)
     except subprocess.CalledProcessError as e:
@@ -181,17 +189,13 @@ def _04_setup_ddns():
     elif ddns_option == 2:
         # Setup ddclient so that our URL points to our public IP. If we don't do this, certbot won't be able to complete the port 80 challenge.
 
-        input("ddclient will be installed via snap. apt-installed version will be removed if present. Press enter to proceed.")
+        # Note, we assume user is on at least bookworm release, as that has version 3.10 of ddclient
+        input("ddclient will be installed via apt package manager. Snap version will be removed if present. Press enter to proceed.")
         print("")
         print("Installing ddclient and required packages...")
         try:
-            subprocess.run(['sudo', 'apt', 'install', '-y', 'libio-socket-ssl-perl'], check=True)
-            # We install ddclient via snap, as the latest version isn't in the apt repo as of Jan 2021.
-            # Also, we want to bypass the broken debconf wizard, and this does that too.
-            subprocess.run(['sudo', 'apt-get', '-y', 'remove', 'ddclient']) #Remove any existing installations from package managers
-            subprocess.run(['sudo', 'snap', 'refresh', 'core'], check=True)
-            subprocess.run(['sudo', 'snap', 'install', 'ddclient-snap',], check=True)
-            subprocess.run(['sudo', 'ln', '-sf', '/snap/bin/ddclient-snap.exec', '/usr/sbin/ddclient'], check=True)
+            subprocess.run(['sudo', 'snap', 'remove', '--purge', 'ddclient-snap']) # Remove any existing installations from snap
+            subprocess.run(['sudo', 'apt', 'install', '-y', 'libio-socket-ssl-perl', 'ddclient'], check=True)
         except subprocess.CalledProcessError as e:
             print(yellow("Error installing ddclient and/or libio-socket-ssl-perl."))
             print(yellow(str(e)))
@@ -252,7 +256,7 @@ def _04_setup_ddns():
 
         print("Launching ddclient daemon...")
         try:
-            subprocess.run(['sudo', 'snap', 'restart', 'ddclient-snap.daemon'], check=True)
+            subprocess.run(['sudo', 'systemctl', 'restart', 'ddclient'], check=True)
         except subprocess.CalledProcessError as e:
             print(yellow("Error launching ddclient daemon."))
             return False
