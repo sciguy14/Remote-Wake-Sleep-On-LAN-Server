@@ -18,7 +18,7 @@ GitHub user [ex0nuss](https://github.com/ex0nuss) has created an x86 Docker Imag
 
 License
 -------
-Copyright 2023 [Jeremy Blum](https://www.jeremyblum.com), [Blum Idea Labs, LLC.](https://www.blumidealabs.com)  
+Copyright 2024 [Jeremy Blum](https://www.jeremyblum.com), [Blum Idea Labs, LLC.](https://www.blumidealabs.com)  
 This project is licensed under the GPLv3 license (see LICENSE.md for details).  
 Please share improvements or remixes with the community, and attribute me (Jeremy Blum, <https://www.jeremyblum.com>) when reusing portions of my code.  
   
