@@ -137,12 +137,16 @@ def _01_install_prereqs():
         subprocess.run(['sudo', 'apt-get', 'update'], check=True)
 
         # Use the latest available php version.
-        php_pkg = subprocess.run("apt-cache search --names-only ^php[0-9]+\.[0-9]+$ | awk '{print $1}", shell=True, check=True)
-        php_curl_pkg = subprocess.run("apt-cache search --names-only ^php[0-9]+\.[0-9]+\-curl$ | awk '{print $1}", shell=True, check=True)
-        php_apache_pkg = subprocess.run("apt-cache search --names-only ^libapache2-mod-php[0-9]+\.[0-9]+$ | awk '{print $1}", shell=True, check=True)
+        php_pkg = subprocess.run("apt-cache search --names-only ^php[0-9]+\.[0-9]+$ | awk '{print $1}'", shell=True, check=True, capture_output = True, text = True)
+        php_curl_pkg = subprocess.run("apt-cache search --names-only ^php[0-9]+\.[0-9]+\-curl$ | awk '{print $1}'", shell=True, check=True, capture_output = True, text = True)
+        php_apache_pkg = subprocess.run("apt-cache search --names-only ^libapache2-mod-php[0-9]+\.[0-9]+$ | awk '{print $1}'", shell=True, check=True, capture_output = True, text = True)
+
+        print(php_pkg.stdout.rstrip())
+        print(php_curl_pkg.stdout.rstrip())
+        print(php_apache_pkg.stdout.rstrip())
 
         # Install packages
-        subprocess.run(['sudo', 'apt-get', '-y', 'install', 'wakeonlan', 'git', 'apache2', php_pkg, php_curl_pkg, php_apache_pkg, 'snapd'], check=True)
+        subprocess.run(['sudo', 'apt-get', '-y', 'install', 'wakeonlan', 'git', 'apache2', php_pkg.stdout.rstrip(), php_curl_pkg.stdout.rstrip(), php_apache_pkg.stdout.rstrip(), 'snapd'], check=True)
         subprocess.run(['sudo', 'snap', 'install', 'core'], check=True)
         subprocess.run(['sudo', 'snap', 'refresh', 'core'], check=True)
         subprocess.run(['sudo', 'apt-get', '-y', 'remove', 'certbot']) # Remove any existing installations from package managers
@@ -306,6 +310,8 @@ def _05_get_ip():
             print(yellow('Error code: ' + str(e.code)))
         return False
     print("The public-facing IPv4 address of this Pi's network was detected as " + cyan(public_ipv4) + ".")
+    global private_ipv4
+    private_ipv4 = str(input("Local IP"))
     return True
 
 # Setup Step 6: Confirm that the DNS update succeeded
@@ -324,7 +330,7 @@ def _06_check_urls():
             failures = True
         else:
             for attempt in range(1, max_attempts+1):
-                if resolved_ip != public_ipv4:
+                if resolved_ip != public_ipv4 and resolved_ip != private_ipv4:
                     if attempt < max_attempts:
                         print("[Attempt " + str(attempt) + "/" + str(max_attempts) + "] " + yellow(url + " resolves to " + resolved_ip + " instead of detected public IP of " + public_ipv4 + "! ") + "Checking again in " + str(attempt**backoff_exponent) + " seconds.")
                         time.sleep(attempt**backoff_exponent)
