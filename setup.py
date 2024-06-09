@@ -141,10 +141,6 @@ def _01_install_prereqs():
         php_curl_pkg = subprocess.run("apt-cache search --names-only ^php[0-9]+\.[0-9]+\-curl$ | awk '{print $1}'", shell=True, check=True, capture_output = True, text = True)
         php_apache_pkg = subprocess.run("apt-cache search --names-only ^libapache2-mod-php[0-9]+\.[0-9]+$ | awk '{print $1}'", shell=True, check=True, capture_output = True, text = True)
 
-        print(php_pkg.stdout.rstrip())
-        print(php_curl_pkg.stdout.rstrip())
-        print(php_apache_pkg.stdout.rstrip())
-
         # Install packages
         subprocess.run(['sudo', 'apt-get', '-y', 'install', 'wakeonlan', 'git', 'apache2', php_pkg.stdout.rstrip(), php_curl_pkg.stdout.rstrip(), php_apache_pkg.stdout.rstrip(), 'snapd'], check=True)
         subprocess.run(['sudo', 'snap', 'install', 'core'], check=True)
@@ -171,7 +167,7 @@ def _03_symlink_webroot():
     try:
         apache_www_dir = pathlib.Path('/var/www')
         wol_www_dir = script_dir.joinpath('www')
-        if apache_www_dir.exists():            
+        if apache_www_dir.exists():
             # If there is a directory here that isn't symlinked, we back it up.
             if not apache_www_dir.is_symlink():
                 subprocess.run(['sudo', 'mv', str(apache_www_dir), str(apache_www_dir) + "_backup"], check=True)
@@ -180,7 +176,7 @@ def _03_symlink_webroot():
         print(yellow("Error symlinking apache webroot to local folder."))
         print(yellow(str(e)))
         return False
-    return True    
+    return True
 
 # Setup Step 4: DDNS Configuration
 def _04_setup_ddns():
@@ -204,7 +200,7 @@ def _04_setup_ddns():
             print(yellow("Error installing ddclient and/or libio-socket-ssl-perl."))
             print(yellow(str(e)))
             return False
-            
+
 
         print("\nNow we need to setup ddclient on this device.")
         ddclient_config_option, _ = multi_choice("Would you like to use this script's wizard to help you generate your ddclient config file, or would you like to provide your own config file?", ['Please help me generate the config file.','I will manually create the ddclient config file (advanced!).'])
@@ -283,8 +279,6 @@ def _05_get_ip():
             print(yellow('Error code: ' + str(e.code)))
         return False
     print("The public-facing IPv4 address of this Pi's network was detected as " + cyan(public_ipv4) + ".")
-    global private_ipv4
-    private_ipv4 = str(input("Local IP"))
     return True
 
 # Setup Step 6: Confirm that the DNS update suceeded
@@ -304,7 +298,7 @@ def _06_check_urls():
         else:
             attempt = 1
             for attempt in range(1, max_attempts+1):
-                if resolved_ip != public_ipv4 and resolved_ip != private_ipv4:
+                if resolved_ip != public_ipv4:
                     if attempt < max_attempts:
                         print("[Attempt " + str(attempt) + "/" + str(max_attempts) + "] " + yellow(url + " resolves to " + resolved_ip + " instead of detected public IP of " + public_ipv4 + "! ") + "Checking again in " + str(attempt**backoff_exponent) + " seconds.")
                         time.sleep(attempt**backoff_exponent)
