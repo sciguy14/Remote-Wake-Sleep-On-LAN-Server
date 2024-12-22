@@ -195,7 +195,7 @@ def _04_setup_ddns():
         print("Installing ddclient and required packages...")
         try:
             subprocess.run(['sudo', 'snap', 'remove', '--purge', 'ddclient-snap']) # Remove any existing installations from snap
-            subprocess.run(['sudo', 'apt', 'install', '-y', 'libio-socket-ssl-perl', 'ddclient'], check=True)
+            subprocess.run(['sudo', 'DEBIAN_FRONTEND=noninteractive', 'apt', 'install', '-yqq', 'libio-socket-ssl-perl', 'ddclient'], check=True)
         except subprocess.CalledProcessError as e:
             print(yellow("Error installing ddclient and/or libio-socket-ssl-perl."))
             print(yellow(str(e)))
@@ -311,7 +311,7 @@ def _05_get_ip():
 # Setup Step 6: Confirm that the DNS update succeeded
 def _06_check_urls():
     fill_urls_var()
-    max_attempts = 5
+    max_attempts = 7
     backoff_exponent = 2
 
     # Now we check to see if each of the URLs resolves to our public-facing IP address.
