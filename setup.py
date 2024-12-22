@@ -69,7 +69,7 @@ def main():
     time.sleep(1)
 
     # Install prerequisites
-    run_step('_01_install_prereqs', 'Install Prequisite Software')
+    run_step('_01_install_prereqs', 'Install Prerequisite Software')
 
     # Ping Permissions
     run_step('_02_ping_permissions', 'Grant Ping Permission')
@@ -114,7 +114,7 @@ def main():
 
 # Function for encapsulating parts of the setup process that can be skipped on script re-run
 # handle: short name for setup step
-# description: human-understandable setup setup name
+# description: human-understandable setup name
 # dot_file_skippable: If True, this step will be skipped if already completed in previous run
 # Returns True if the setup step should be run, False if it was already previously completed
 def run_step(handle, description, dot_file_skippable=True):
@@ -130,7 +130,7 @@ def run_step(handle, description, dot_file_skippable=True):
             print(red("Script Exiting due to failure in '" + description + "' setup step.\n"))
             sys.exit(1) 
 
-# Setup Step 1: Install Prequisite Software
+# Setup Step 1: Install Prerequisite Software
 def _01_install_prereqs():
     try:
         # Update the APT Cache
@@ -180,7 +180,7 @@ def _03_symlink_webroot():
 
 # Setup Step 4: DDNS Configuration
 def _04_setup_ddns():
-    ddns_option, _ = multi_choice('Will you handle Dynamic DNS updates from your router, or would you like to setup Dynamic DNS updating on this Pi?', ['I will handle DDNS on my router or elesewhere.','I want to configure DDNS updates from this Pi.'])
+    ddns_option, _ = multi_choice('Will you handle Dynamic DNS updates from your router, or would you like to setup Dynamic DNS updating on this Pi?', ['I will handle DDNS on my router or elsewhere.','I want to configure DDNS updates from this Pi.'])
     print ("")
     if ddns_option == 1:
         print("Ok. If you haven't already, go configure your router or other device to update your DDNS service of choice, now.")
@@ -302,13 +302,13 @@ def _05_get_ip():
             print(yellow('Failed to reach the ident.me server.'))
             print(yellow('Reason: ' + str(e.reason)))
         elif hasattr(e, 'code'):
-            print(yellow('The ident.me server couldn\'t fulfill the request.'))
+            print(yellow('The ident.me server could not fulfill the request.'))
             print(yellow('Error code: ' + str(e.code)))
         return False
     print("The public-facing IPv4 address of this Pi's network was detected as " + cyan(public_ipv4) + ".")
     return True
 
-# Setup Step 6: Confirm that the DNS update suceeded
+# Setup Step 6: Confirm that the DNS update succeeded
 def _06_check_urls():
     fill_urls_var()
     max_attempts = 5
@@ -342,10 +342,10 @@ def _06_check_urls():
         return False
     return True
 
-# Setup Step 7: Check to see if port 80 and/or port 443 is currently serving RWSOLs to correctly display options for cert setup
+# Setup Step 7: Check to see if port 80 and/or port 443 is currently serving RWSOLS to correctly display options for cert setup
 def _07_server_check():
     global encryption_mode
-    no_encryption_option_text = 'I do not wish to enable encryption. (You can still manually setup certbot later using a Port 80 or DNS challenege).'
+    no_encryption_option_text = 'I do not wish to enable encryption. (You can still manually setup certbot later using a Port 80 or DNS challenge).'
     disable_encryption_option_text = 'I wish to disable encryption, making RWSOLS accessible over an unencrypted connection only.'
     switch_to_unsigned_option_text = 'I wish to change from a signed certificate to an unsigned certificate.'
     switch_to_signed_option_text = 'I wish to change from an unsigned certificate to a signed certificate (RECOMMENDED OPTION).'
@@ -359,7 +359,7 @@ def _07_server_check():
 
     # RWSOLS is already running with a signed cert
     if https_rwsols and https_signed:
-        print("Your RWSOLS is already acceessible over an encrypted connection with a valid signed certificate.")
+        print("Your RWSOLS is already accessible over an encrypted connection with a valid signed certificate.")
         c, _ = multi_choice('How would you like to proceed?', [retain_encryption_settings_option_text, switch_to_unsigned_option_text, disable_encryption_option_text])
         if c == 1:
             encryption_mode="skip"
@@ -371,7 +371,7 @@ def _07_server_check():
 
     # RWSOLS is already running with a self-signed cert, and port 80 is accessible
     elif http_rwsols and https_rwsols and not https_signed:
-        print("Your RWSOLS is already acceessible over an encrypted connection, but it is using a self-signed certificate.")
+        print("Your RWSOLS is already accessible over an encrypted connection, but it is using a self-signed certificate.")
         print("Port 80 is also correctly resolving to RWSOLS, so automatic certbot configuration should be possible, and is recommended.")
         c, _ = multi_choice('How would you like to proceed?', [switch_to_signed_option_text, retain_encryption_settings_option_text, disable_encryption_option_text])
         if c == 1:
@@ -384,7 +384,7 @@ def _07_server_check():
 
     # RWSOLS is already running with a self-signed cert and port 80 is not accessible
     elif not http_rwsols and https_rwsols and not https_signed:
-        print("Your RWSOLS is already acceessible over an encrypted connection, but it is using a self-signed certificate.")
+        print("Your RWSOLS is already accessible over an encrypted connection, but it is using a self-signed certificate.")
         print("Port 80 does not appear to be open and pointed to RWSOLS, so automatic certbot configuration is not possible.")
         c, _ = multi_choice('How would you like to proceed?', [exit_and_fix_option_text, retain_encryption_settings_option_text, disable_encryption_option_text])
         if c == 1:
@@ -441,12 +441,12 @@ def _08_certbot_setup():
             break
     fill_urls_var()
 
-    # In case setup has previously run and has copied over the site config with the SSL port configured, we restore the the HTTP-only config so that there is only one virtualhost for certbot
+    # In case setup has previously run and has copied over the site config with the SSL port configured, we restore the HTTP-only config so that there is only one virtualhost for certbot
     try:
         bak = copy_config_with_backup(script_dir.joinpath('apache2_configs/000-default_http.conf'), '/etc/apache2/sites-available/000-default.conf')
         subprocess.run(['sudo', 'service', 'apache2', 'restart'], check=True)
     except subprocess.CalledProcessError as e:
-        print(yellow("Error getting Apache2 site config into deafult state before running certbot."))
+        print(yellow("Error getting Apache2 site config into default state before running certbot."))
         print(yellow(str(e)))
         return False
 
@@ -622,7 +622,7 @@ def _11_modify_config_file():
                 break
 
         # We use PHP's password hashing function, since PHP will be responsible for checking the password hash when received by the website
-        # Note that this must be in single quotes so that PHP doesn't expand variables inside of the string
+        # Note that this must be in single quotes so that PHP doesn't expand variables inside the string
         try:
             r = subprocess.run(['php', '-r', 'echo password_hash(\'' + p1 + '\', PASSWORD_DEFAULT);'], capture_output=True, check=True)
             pw_hash = r.stdout.decode('utf8').strip()
@@ -632,7 +632,7 @@ def _11_modify_config_file():
             return False
 
         # Save the Hash, Using the fileinput method here, because sed is a nightmare with escape characters
-        # Note that this must be in single quotes so that PHP doesn't expand variables inside of the string
+        # Note that this must be in single quotes so that PHP doesn't expand variables inside the string
         pw_updated = False
         with fileinput.FileInput(rwsols_config_user, inplace = True) as f: 
             for line in f:
@@ -706,15 +706,15 @@ def fill_urls_var():
             print(yellow("Could not automatically determine the desired URL(s) from ddclient."))
             print(yellow(str(e)))
             print("\nIf you ARE running ddclient locally (i.e. Configured by this script), but this failed, it's possible your configuration file is incorrect.")
-            print("You can always re-run that step by delecting the 'setup_ddns' dot file in this folder and re-running this script.")
+            print("You can always re-run that step by deleting the 'setup_ddns' dot file in this folder and re-running this script.")
             print("Or, edit your ddclient config file manually at " + str(ddns_real_config) + ".\n")
     # If we couldn't grab it from ddclient config file either, then we must ask user
     if len(urls) == 0:
         print("If you're running your DDNS updating service elsewhere, then don't worry about that and enter the URL(s) manually for checking.")
-        urls = enter_urls('Enter all the URLs that should be pointing at your public IP (seperate with commas if multiple): ')
+        urls = enter_urls('Enter all the URLs that should be pointing at your public IP (separate with commas if multiple): ')
 
-# Prompt Function for entering multiple comma seperated, proper-format FQDNs
-# query: Request to be presented. e.g. Please enter one or more domain names, comma seperated
+# Prompt Function for entering multiple comma separated, proper-format FQDNs
+# query: Request to be presented. e.g. Please enter one or more domain names, comma separated
 # Returns a list of validated FQDNs
 def enter_urls(query):
     while True:
@@ -765,14 +765,14 @@ def get_local_ip():
 # Function that copies relevant apache2 config files while creating timestamped backups of the original
 # Returns the path to the backup file that was created
 def copy_config_with_backup(src, dst):
-    # Make a copy of the destination file with a timesamp
+    # Make a copy of the destination file with a timestamp
     backup_file_path = str(dst) + '.%s.bak' % str(int(time.time()))
     subprocess.run(['sudo', 'cp', str(dst), backup_file_path], check=True)
     subprocess.run(['sudo', 'cp', str(src), str(dst)], check=True)
     return backup_file_path
 
 
-# Function that checks to see if RWSOLS is current servering on port 80 and/or 443, and whether or not there is already a signed cert.
+# Function that checks to see if RWSOLS is currently serving on port 80 and/or 443, and whether there is already a signed cert.
 # Returns a tuple with the following:
 #    * boolean: True if there is any accessible at port 80 (may or may not be RWSOLS)
 #    * boolean: True if RWSOLS is serving on Port 80
@@ -812,7 +812,7 @@ def rwsols_serving_status():
         print(yellow(f"Couldn't connect to port 443 due to an HTTP Error ({str(e)})."))
     except (urllib.error.URLError, ssl.SSLCertVerificationError):
         print(yellow("Couldn't to connect to port 443 with strict checking for signed certs."))
-        # There was a SSL Cert Error, which means that it still might work with a self-signed cert
+        # There was an SSL Cert Error, which means that it still might work with a self-signed cert
         # So, we check again, after allow self-signed certs:
         try:
             self_signed_ssl_context = ssl.create_default_context()
