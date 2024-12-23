@@ -21,6 +21,8 @@ $APPROVED_HASH = NULL;
 // >
 
 // The rest of the value should be set by you based on your configuration of computers to wake/sleep
+// Note that this file (and everything else in this folder) needs to be copied into /var/www/html, as that if where apache's webroot is.
+// The Setup script will automatically copy this file over at completion, and you can run it again if needed.
 // -------------------------------
 
 // This is the number of times that the WOL server will try to ping the target computer to check if it has woken up. Default = 15.

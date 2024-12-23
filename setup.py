@@ -20,6 +20,8 @@ import socket
 import time
 import ssl
 import fileinput
+import filecmp
+import datetime
 
 # Exit Handler
 def signal_handler(sig, frame):
@@ -74,8 +76,8 @@ def main():
     # Ping Permissions
     run_step('_02_ping_permissions', 'Grant Ping Permission')
 
-    # Symlink the Webroot to our files
-    run_step('_03_symlink_webroot', 'Symlink Apache2 Webroot')
+    # Copy our web files to the Apache webroot
+    run_step('_03_copy_webroot', 'Copy Unconfigured Webroot', False)
 
     # ddclient DDNS Setup
     run_step('_04_setup_ddns', 'Setup DDNS')
@@ -108,6 +110,9 @@ def main():
     # Create user copy of config file
     run_step('_11_modify_config_file', 'Modify WOL Config File', False)
 
+    # Copy webroot to apache webroot folder for web-serving
+    # We do this again here, because now the config has been updated
+    run_step('_12_copy_webroot', 'Copy Configured Webroot', False)
 
     print("Automatic Setup is now complete.")
 
@@ -162,21 +167,23 @@ def _02_ping_permissions():
         return False
     return True
 
-# Setup Step 3: Symlink Apache2 Webroot
-def _03_symlink_webroot():
+# Setup Step 3: Copy unconfigured webroot to default apache directory
+def _03_copy_webroot():
+    wol_html_dir = script_dir.joinpath('www/html')
+    apache_www_dir = pathlib.Path('/var/www')
+    apache_html_dir = apache_www_dir.joinpath('html')
     try:
-        apache_www_dir = pathlib.Path('/var/www')
-        wol_www_dir = script_dir.joinpath('www')
-        if apache_www_dir.exists():
-            # If there is a directory here that isn't symlinked, we back it up.
-            if not apache_www_dir.is_symlink():
-                subprocess.run(['sudo', 'mv', str(apache_www_dir), str(apache_www_dir) + "_backup"], check=True)
-            # If there is a symlinked directory, we delete it so we can reliably recreate it.
-            else:
-                subprocess.run(['sudo', 'rm', '-f', str(apache_www_dir)], check=True)
-        subprocess.run(['sudo', 'ln', '-sf', str(wol_www_dir), str(apache_www_dir)], check=True)
+        if directories_match(wol_html_dir, apache_html_dir):
+            print(cyan("Apache webroot contents already match local webroot contents. No update to be made."))
+        else:
+            print(yellow("The Apache webroot contents do not match local webroot."))
+            backup_dir_str = str(apache_www_dir) + "/html_backup_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
+            subprocess.run(['sudo', 'mv', str(apache_html_dir), backup_dir_str], check=True)
+            print(yellow("Apache webroot backed up to " + backup_dir_str))
+            subprocess.run(['sudo', 'cp', '-R', str(wol_html_dir), str(apache_www_dir)], check=True)
+            print(cyan("Website contents copied to Apache webroot."))
     except Exception as e:
-        print(yellow("Error symlinking apache webroot to local folder."))
+        print(yellow("Error moving website contents to Apache webroot folder."))
         print(yellow(str(e)))
         return False
     return True
@@ -660,6 +667,9 @@ def _11_modify_config_file():
     print("The config file has been written.\n")
     return True
 
+# Step 12: Copy configured webroot to default apache directory (just run step 3 again)
+def _12_copy_webroot():
+    return _03_copy_webroot()
 
 
 # Prompt Function for Multiple Choice Questions.
@@ -777,7 +787,7 @@ def copy_config_with_backup(src, dst):
 
 # Function that checks to see if RWSOLS is currently serving on port 80 and/or 443, and whether there is already a signed cert.
 # Returns a tuple with the following:
-#    * boolean: True if there is any accessible at port 80 (may or may not be RWSOLS)
+#    * boolean: True if there is any server accessible at port 80 (may or may not be RWSOLS)
 #    * boolean: True if RWSOLS is serving on Port 80
 #    * boolean: True if there is any accessible server at port 443 (may or may not be RWSOLS)
 #    * boolean: True if RWSOLS is serving on Port 443 (regardless of cert type)
@@ -851,9 +861,24 @@ def rwsols_serving_status():
             print(yellow("Something was found at " + urls[0] + " port 443, but it was not RWSOLS."))
 
     
-    return http_server, http_rwsols, https_server, https_rwsols, https_signed 
+    return http_server, http_rwsols, https_server, https_rwsols, https_signed
 
+# Function that returns true if two directories have matching contents
+def directories_match(dir1, dir2):
+    if not os.path.isdir(dir1) or not os.path.isdir(dir2):
+        raise ValueError("Both inputs must be valid directories.")
 
+    comparison = filecmp.dircmp(dir1, dir2)
+    # Check for files and subdirectories that differ
+    if comparison.left_only or comparison.right_only or comparison.diff_files or comparison.funny_files:
+        return False
+    # Recursively check subdirectories
+    for subdir in comparison.common_dirs:
+        subdir1 = os.path.join(dir1, subdir)
+        subdir2 = os.path.join(dir2, subdir)
+        if not directories_match(subdir1, subdir2):
+            return False
+    return True
 
 # Execute
 if __name__ == "__main__":
