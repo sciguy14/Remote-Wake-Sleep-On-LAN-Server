@@ -171,6 +171,9 @@ def _03_symlink_webroot():
             # If there is a directory here that isn't symlinked, we back it up.
             if not apache_www_dir.is_symlink():
                 subprocess.run(['sudo', 'mv', str(apache_www_dir), str(apache_www_dir) + "_backup"], check=True)
+            # If there is a symlinked directory, we delete it so we can reliably recreate it.
+            else:
+                subprocess.run(['sudo', 'rm', '-f', str(apache_www_dir)], check=True)
         subprocess.run(['sudo', 'ln', '-sf', str(wol_www_dir), str(apache_www_dir)], check=True)
     except Exception as e:
         print(yellow("Error symlinking apache webroot to local folder."))
