@@ -460,9 +460,10 @@ def _08_certbot_setup():
         print(yellow(str(e)))
         return False
 
-    # Run certbot non-interactively
+    # Run certbot non-interactively.
+    # Note that OCSP stapling support was removed by Let's Encrypt in 2025, so the `--staple-ocsp` and `--must-staple` flags are removed from the below command.
     try:
-        subprocess.run(['sudo', 'certbot', '--apache', '--non-interactive', '--agree-tos', '--redirect', '--uir', '--hsts', '--staple-ocsp', '--must-staple', '-d', ','.join(urls), '--email', email], check=True)
+        subprocess.run(['sudo', 'certbot', '--apache', '--non-interactive', '--agree-tos', '--redirect', '--uir', '--hsts', '-d', ','.join(urls), '--email', email], check=True)
     except subprocess.CalledProcessError as e:
         print(yellow("Error running certbot."))
         print(yellow(str(e)))
