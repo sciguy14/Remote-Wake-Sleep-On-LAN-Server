@@ -110,7 +110,7 @@ else
             {
                 if (!is_null($APPROVED_HASH))
                 {
-                    if (password_verify($_POST['password'], $APPROVED_HASH))
+                    if (hash("sha256", $_POST['password']) === $APPROVED_HASH)
 	                {
 						if ($_POST['submitbutton'] == "Wake Up!")
 						{
