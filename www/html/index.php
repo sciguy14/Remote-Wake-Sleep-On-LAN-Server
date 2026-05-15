@@ -338,8 +338,11 @@ else
 				elseif ($hard_power_off)
 				{
 					$gpioPin = $COMPUTER_RELAY_GPIO[$selectedComputer];
-					echo "<p>Approved. Cutting hard power to " . $COMPUTER_NAME[$selectedComputer] . "...</p>";
-					if (setRelayPower($gpioPin, false))
+					if (is_null($gpioPin))
+					{
+						echo "<p style='color:#CC0000;'><b>FAILED!</b> " . $COMPUTER_NAME[$selectedComputer] . " has no relay configured.</p>";
+					}
+					elseif (setRelayPower($gpioPin, false))
 					{
 						echo "<p><span style='color:#00CC00;'><b>Power Cut!</b></span> Waiting for " . $COMPUTER_NAME[$selectedComputer] . " to go down...</p><p>";
 						$count = 1;
@@ -379,8 +382,11 @@ else
 				elseif ($hard_power_on)
 				{
 					$gpioPin = $COMPUTER_RELAY_GPIO[$selectedComputer];
-					echo "<p>Approved. Restoring hard power to " . $COMPUTER_NAME[$selectedComputer] . "...</p>";
-					if (setRelayPower($gpioPin, true))
+					if (is_null($gpioPin))
+					{
+						echo "<p style='color:#CC0000;'><b>FAILED!</b> " . $COMPUTER_NAME[$selectedComputer] . " has no relay configured.</p>";
+					}
+					elseif (setRelayPower($gpioPin, true))
 					{
 						echo "<p><span style='color:#00CC00;'><b>Power Restored!</b></span></p>";
 						echo "<p>Sending WOL Command...</p>";
