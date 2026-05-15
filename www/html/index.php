@@ -13,23 +13,26 @@ require_once('config.php');
 if (!isset($COMPUTER_RELAY_GPIO)) {
     $COMPUTER_RELAY_GPIO = array_fill(0, count($COMPUTER_NAME), NULL);
 }
-
-// GPIO relay helpers for Digital Loggers IOT Relay ("Normally On" outlet)
-// GPIO HIGH = relay energized = outlet OFF | GPIO LOW = relay de-energized = outlet ON
-function getRelayPowerState($pin) {
-    $output = shell_exec('sudo pinctrl get ' . intval($pin) . ' 2>&1');
-    if (strpos($output, '| hi') !== false) {
-        return 'off';
-    }
-    return 'on';
+// Pad the array if it's shorter than the computer list (user added computers but forgot to extend)
+while (count($COMPUTER_RELAY_GPIO) < count($COMPUTER_NAME)) {
+    $COMPUTER_RELAY_GPIO[] = NULL;
 }
 
-function setRelayPower($pin, $powerOn) {
-    if ($powerOn) {
-        exec('sudo pinctrl set ' . intval($pin) . ' op dl');
-    } else {
-        exec('sudo pinctrl set ' . intval($pin) . ' op dh');
+// GPIO relay helpers using the rwsols-relay script (installed to /usr/local/bin by setup.py)
+// Returns 'on', 'off', or null on error
+function getRelayPowerState($pin) {
+    $output = trim(shell_exec('sudo /usr/local/bin/rwsols-relay get ' . intval($pin) . ' 2>/dev/null'));
+    if ($output === 'on' || $output === 'off') {
+        return $output;
     }
+    return null;
+}
+
+// Returns true on success, false on failure
+function setRelayPower($pin, $powerOn) {
+    $cmd = $powerOn ? 'on' : 'off';
+    exec('sudo /usr/local/bin/rwsols-relay ' . $cmd . ' ' . intval($pin), $output, $result_code);
+    return $result_code === 0;
 }
 
 //set headers that harden the HTTPS session
@@ -240,10 +243,13 @@ else
 					if (!is_null($COMPUTER_RELAY_GPIO[$selectedComputer]))
 					{
 						$relayState = getRelayPowerState($COMPUTER_RELAY_GPIO[$selectedComputer]);
-						$relay_power_on = ($relayState == 'on');
-						if ($relay_power_on) {
+						if ($relayState === null) {
+							echo "<h5>Hard Power Relay: <span style='color:#CC0000;'>ERROR - Unable to read state</span></h5>";
+						} elseif ($relayState == 'on') {
+							$relay_power_on = true;
 							echo "<h5>Hard Power Relay: <span style='color:#00CC00;'>ON</span></h5>";
 						} else {
+							$relay_power_on = false;
 							echo "<h5>Hard Power Relay: <span style='color:#CC0000;'>OFF</span></h5>";
 						}
 					}
@@ -333,9 +339,7 @@ else
 				{
 					$gpioPin = $COMPUTER_RELAY_GPIO[$selectedComputer];
 					echo "<p>Approved. Cutting hard power to " . $COMPUTER_NAME[$selectedComputer] . "...</p>";
-					setRelayPower($gpioPin, false);
-					$state = getRelayPowerState($gpioPin);
-					if ($state == 'off')
+					if (setRelayPower($gpioPin, false))
 					{
 						echo "<p><span style='color:#00CC00;'><b>Power Cut!</b></span> Waiting for " . $COMPUTER_NAME[$selectedComputer] . " to go down...</p><p>";
 						$count = 1;
@@ -376,9 +380,7 @@ else
 				{
 					$gpioPin = $COMPUTER_RELAY_GPIO[$selectedComputer];
 					echo "<p>Approved. Restoring hard power to " . $COMPUTER_NAME[$selectedComputer] . "...</p>";
-					setRelayPower($gpioPin, true);
-					$state = getRelayPowerState($gpioPin);
-					if ($state == 'on')
+					if (setRelayPower($gpioPin, true))
 					{
 						echo "<p><span style='color:#00CC00;'><b>Power Restored!</b></span></p>";
 						echo "<p>Sending WOL Command...</p>";
@@ -427,7 +429,10 @@ else
                 {
 					// Query relay state for button rendering if not already known
 					if (!is_null($COMPUTER_RELAY_GPIO[$selectedComputer]) && $relay_power_on === null) {
-						$relay_power_on = (getRelayPowerState($COMPUTER_RELAY_GPIO[$selectedComputer]) == 'on');
+						$relayState = getRelayPowerState($COMPUTER_RELAY_GPIO[$selectedComputer]);
+						if ($relayState !== null) {
+							$relay_power_on = ($relayState == 'on');
+						}
 					}
             ?>
         			<input type="password" autocomplete=off class="input-block-level" placeholder="Enter Passphrase" <?php if (isset($approved) && $approved == true) {echo "value='" . $_POST['password'] . "'";} ?> name="password">

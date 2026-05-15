@@ -170,13 +170,15 @@ def _02_ping_permissions():
         return False
     return True
 
-# Setup Step 2a: Grant www-data permission to control GPIO pins via pinctrl for hard power relay control.
+# Setup Step 2a: Install the GPIO relay helper script and grant www-data permission to run it via sudo.
 def _02a_gpio_relay_permissions():
+    relay_script_src = script_dir.joinpath('rwsols-relay')
+    relay_script_dst = '/usr/local/bin/rwsols-relay'
     sudoers_file = '/etc/sudoers.d/rwsols-gpio'
-    sudoers_rule = 'www-data ALL=(root) NOPASSWD: /usr/bin/pinctrl\n'
+    sudoers_rule = 'www-data ALL=(root) NOPASSWD: ' + relay_script_dst
     try:
-        subprocess.run(['sudo', 'bash', '-c', 'echo "' + sudoers_rule.strip() + '" > ' + sudoers_file], check=True)
-        subprocess.run(['sudo', 'chmod', '440', sudoers_file], check=True)
+        subprocess.run(['sudo', 'install', '-m', '755', str(relay_script_src), relay_script_dst], check=True)
+        subprocess.run(['sudo', 'install', '-m', '440', '/dev/stdin', sudoers_file], input=sudoers_rule.encode(), check=True)
         subprocess.run(['sudo', 'usermod', '-aG', 'gpio', 'www-data'], check=True)
     except subprocess.CalledProcessError:
         print(yellow("Error setting GPIO relay permissions."))
