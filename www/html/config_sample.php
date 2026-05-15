@@ -40,6 +40,14 @@ $COMPUTER_MAC = array("00:00:00:00:00:00","00:00:00:00:00:00");
 // This is the LOCAL IP address of the computer you are trying to wake.  Use a reserved DHCP through your router's administration interface to ensure it doesn't change.
 $COMPUTER_LOCAL_IP = array("192.168.0.1","192.168.0.2");
 
+// This is the BCM GPIO pin number (integer) on the Raspberry Pi that controls a Digital Loggers IOT Relay for hard power control.
+// Use the integer BCM pin number only (e.g. 17, not "17" or "GPIO17").
+// The controlled computer should be plugged into the relay's "Normally On" outlet.
+// When the GPIO goes HIGH, the relay energizes and the "Normally On" outlet loses power (hard power off).
+// When the GPIO is LOW (default), the "Normally On" outlet has power (normal operation).
+// Set to NULL for computers without GPIO relay control.
+$COMPUTER_RELAY_GPIO = array(NULL, NULL);
+
 // This is the Port being used by the Windows SleepOnLan Utility to initiate a Sleep State
 // http://www.ireksoftware.com/SleepOnLan/
 // Alternate Download Link: http://www.jeremyblum.com/wp-content/uploads/2013/07/SleepOnLan.zip

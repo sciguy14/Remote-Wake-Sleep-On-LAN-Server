@@ -1,0 +1,48 @@
+#!/bin/bash
+# RWSOLS GPIO Relay Helper
+# Controls a Digital Loggers IOT Relay via Raspberry Pi GPIO.
+# Installed to /usr/local/bin/rwsols-relay by setup.py.
+# Only permits get/on/off operations on pins explicitly configured in config.php.
+
+CONFIG="/var/www/html/config.php"
+PIN="$2"
+
+if ! [[ "$PIN" =~ ^[0-9]+$ ]]; then
+    echo "error: invalid pin" >&2
+    exit 1
+fi
+
+ALLOWED_PINS=$(grep 'COMPUTER_RELAY_GPIO' "$CONFIG" 2>/dev/null | grep -oE 'array\([^)]+' | grep -oE '[0-9]+')
+if [ -z "$ALLOWED_PINS" ]; then
+    echo "error: no pins configured" >&2
+    exit 1
+fi
+
+if ! echo "$ALLOWED_PINS" | grep -qw "$PIN"; then
+    echo "error: pin $PIN not configured" >&2
+    exit 1
+fi
+
+case "$1" in
+    get)
+        OUTPUT=$(pinctrl get "$PIN" 2>&1)
+        if echo "$OUTPUT" | grep -q '| hi'; then
+            echo "off"
+        elif echo "$OUTPUT" | grep -q '| lo\|| --'; then
+            echo "on"
+        else
+            echo "error: unable to read pin state" >&2
+            exit 1
+        fi
+        ;;
+    on)
+        pinctrl set "$PIN" op dl
+        ;;
+    off)
+        pinctrl set "$PIN" op dh
+        ;;
+    *)
+        echo "error: usage: rwsols-relay {get|on|off} <pin>" >&2
+        exit 1
+        ;;
+esac

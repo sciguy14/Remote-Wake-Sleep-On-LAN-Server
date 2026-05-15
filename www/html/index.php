@@ -9,6 +9,32 @@ License: GPL v3 (http://www.gnu.org/licenses/gpl.html)
 //You should not need to edit this file. Adjust Parameters in the config file:
 require_once('config.php');
 
+// Backward compatibility for configs without GPIO relay support
+if (!isset($COMPUTER_RELAY_GPIO)) {
+    $COMPUTER_RELAY_GPIO = array_fill(0, count($COMPUTER_NAME), NULL);
+}
+// Pad the array if it's shorter than the computer list (user added computers but forgot to extend)
+while (count($COMPUTER_RELAY_GPIO) < count($COMPUTER_NAME)) {
+    $COMPUTER_RELAY_GPIO[] = NULL;
+}
+
+// GPIO relay helpers using the rwsols-relay script (installed to /usr/local/bin by setup.py)
+// Returns 'on', 'off', or null on error
+function getRelayPowerState($pin) {
+    $output = trim(shell_exec('sudo /usr/local/bin/rwsols-relay get ' . intval($pin) . ' 2>/dev/null'));
+    if ($output === 'on' || $output === 'off') {
+        return $output;
+    }
+    return null;
+}
+
+// Returns true on success, false on failure
+function setRelayPower($pin, $powerOn) {
+    $cmd = $powerOn ? 'on' : 'off';
+    exec('sudo /usr/local/bin/rwsols-relay ' . $cmd . ' ' . intval($pin), $output, $result_code);
+    return $result_code === 0;
+}
+
 //set headers that harden the HTTPS session
 if ($USE_HTTPS)
 {
@@ -104,7 +130,10 @@ else
     		$approved = false;
 			$wake_up = false;
 			$go_to_sleep = false;
+			$hard_power_off = false;
+			$hard_power_on = false;
 			$check_current_status = false;
+			$relay_power_on = null;
 
 			if ( isset($_POST['password']) )
             {
@@ -126,6 +155,16 @@ else
 						{
 							$approved = true;
 							$check_current_status = true;
+						}
+						elseif ($_POST['submitbutton'] == "Hard Power Off!")
+						{
+							$approved = true;
+							$hard_power_off = true;
+						}
+						elseif ($_POST['submitbutton'] == "Hard Power On!")
+						{
+							$approved = true;
+							$hard_power_on = true;
 						}
 					}
                 }
@@ -153,6 +192,10 @@ else
 					echo "Waking Up!";
 				} elseif ($go_to_sleep) {
 					echo "Going to Sleep!";
+				} elseif ($hard_power_off) {
+					echo "Cutting Power!";
+				} elseif ($hard_power_on) {
+					echo "Restoring Power!";
 				} else {?>
                     <select name="computer" onchange="if (this.value) window.location.href='?computer=' + this.value">
                     <?php
@@ -195,6 +238,20 @@ else
 					{
 						$asleep = false;
 						echo "<h5>" . $COMPUTER_NAME[$selectedComputer] . " is presently awake.</h5>";
+					}
+
+					if (!is_null($COMPUTER_RELAY_GPIO[$selectedComputer]))
+					{
+						$relayState = getRelayPowerState($COMPUTER_RELAY_GPIO[$selectedComputer]);
+						if ($relayState === null) {
+							echo "<h5>Hard Power Relay: <span style='color:#CC0000;'>ERROR - Unable to read state</span></h5>";
+						} elseif ($relayState == 'on') {
+							$relay_power_on = true;
+							echo "<h5>Hard Power Relay: <span style='color:#00CC00;'>ON</span></h5>";
+						} else {
+							$relay_power_on = false;
+							echo "<h5>Hard Power Relay: <span style='color:#CC0000;'>OFF</span></h5>";
+						}
 					}
 
                 }
@@ -278,6 +335,97 @@ else
 					}
 					curl_close($ch);
 				}
+				elseif ($hard_power_off)
+				{
+					$gpioPin = $COMPUTER_RELAY_GPIO[$selectedComputer];
+					if (is_null($gpioPin))
+					{
+						echo "<p style='color:#CC0000;'><b>FAILED!</b> " . $COMPUTER_NAME[$selectedComputer] . " has no relay configured.</p>";
+					}
+					elseif (setRelayPower($gpioPin, false))
+					{
+						echo "<p><span style='color:#00CC00;'><b>Power Cut!</b></span> Waiting for " . $COMPUTER_NAME[$selectedComputer] . " to go down...</p><p>";
+						$count = 1;
+						$down = false;
+						while ($count <= $MAX_PINGS && $down == false)
+						{
+							echo "Ping " . $count . "...";
+							$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP[$selectedComputer]);
+							$count++;
+							if ($pinginfo == "")
+							{
+								$down = true;
+								echo "<span style='color:#00CC00;'><b>Confirmed Down.</b></span><br />";
+								echo "<p><a href='?computer=" . $selectedComputer . "'>Return to the Wake/Sleep Control Home</a></p>";
+								$show_form = false;
+							}
+							else
+							{
+								echo "<span style='color:#CC0000;'><b>Still Responding.</b></span><br />";
+							}
+							sleep($SLEEP_TIME);
+						}
+						echo "</p>";
+						if ($down == false)
+						{
+							echo "<p><span style='color:#00CC00;'><b>Power is cut.</b></span> " . $COMPUTER_NAME[$selectedComputer] . " may still be shutting down.</p><p><a href='?computer=" . $selectedComputer . "'>Return to the Wake/Sleep Control Home</a></p>";
+							$show_form = false;
+						}
+					}
+					else
+					{
+						echo "<p style='color:#CC0000;'><b>FAILED!</b> Could not cut power to " . $COMPUTER_NAME[$selectedComputer] . ". Check GPIO configuration.</p>";
+						$asleep = false;
+						$relay_power_on = true;
+					}
+				}
+				elseif ($hard_power_on)
+				{
+					$gpioPin = $COMPUTER_RELAY_GPIO[$selectedComputer];
+					if (is_null($gpioPin))
+					{
+						echo "<p style='color:#CC0000;'><b>FAILED!</b> " . $COMPUTER_NAME[$selectedComputer] . " has no relay configured.</p>";
+					}
+					elseif (setRelayPower($gpioPin, true))
+					{
+						echo "<p><span style='color:#00CC00;'><b>Power Restored!</b></span></p>";
+						echo "<p>Sending WOL Command...</p>";
+						exec('wakeonlan ' . $COMPUTER_MAC[$selectedComputer]);
+						echo "<p>Waiting for " . $COMPUTER_NAME[$selectedComputer] . " to come up...</p><p>";
+						$count = 1;
+						$down = true;
+						while ($count <= $MAX_PINGS && $down == true)
+						{
+							echo "Ping " . $count . "...";
+							$pinginfo = exec("ping -c 1 " . $COMPUTER_LOCAL_IP[$selectedComputer]);
+							$count++;
+							if ($pinginfo != "")
+							{
+								$down = false;
+								echo "<span style='color:#00CC00;'><b>It's Alive!</b></span><br />";
+								echo "<p><a href='?computer=" . $selectedComputer . "'>Return to the Wake/Sleep Control Home</a></p>";
+								$show_form = false;
+							}
+							else
+							{
+								echo "<span style='color:#CC0000;'><b>Still Down.</b></span><br />";
+							}
+							sleep($SLEEP_TIME);
+						}
+						echo "</p>";
+						if ($down == true)
+						{
+							echo "<p style='color:#CC0000;'><b>Note:</b> Power was restored, but " . $COMPUTER_NAME[$selectedComputer] . " hasn't responded yet. The BIOS may not be set to auto-boot on AC restore. Try Wake Up!</p><p><a href='?computer=" . $selectedComputer . "'>Return to the Wake/Sleep Control Home</a></p>";
+							$show_form = false;
+						}
+					}
+					else
+					{
+						echo "<p style='color:#CC0000;'><b>FAILED!</b> Could not restore power to " . $COMPUTER_NAME[$selectedComputer] . ". Check GPIO configuration.</p>";
+						$asleep = true;
+						$relay_power_on = false;
+					}
+				}
 				elseif (isset($_POST['submitbutton']))
 				{
 					echo "<p style='color:#CC0000;'><b>Invalid Passphrase. Request Denied.</b></p>";
@@ -285,17 +433,35 @@ else
                 
                 if ($show_form)
                 {
+					// Query relay state for button rendering if not already known
+					if (!is_null($COMPUTER_RELAY_GPIO[$selectedComputer]) && $relay_power_on === null) {
+						$relayState = getRelayPowerState($COMPUTER_RELAY_GPIO[$selectedComputer]);
+						if ($relayState !== null) {
+							$relay_power_on = ($relayState == 'on');
+						}
+					}
             ?>
         			<input type="password" autocomplete=off class="input-block-level" placeholder="Enter Passphrase" <?php if (isset($approved) && $approved == true) {echo "value='" . $_POST['password'] . "'";} ?> name="password">
         			<?php if ( !isset($_POST['submitbutton']) || ($approved == false) ) { ?>
         			    <input class="btn btn-large btn-primary" type="submit" name="submitbutton" value="Check Status"/>
 						<input type="hidden" name="submitbutton" value="Check Status" />  <!-- handle if IE used and enter button pressed instead of sleep button -->
-                    <?php } elseif (  $asleep ) { ?>
+                    <?php } elseif ( !is_null($COMPUTER_RELAY_GPIO[$selectedComputer]) && $relay_power_on === false ) { ?>
+						<input class="btn btn-large btn-success" type="submit" name="submitbutton" value="Hard Power On!"/>
+						<input type="hidden" name="submitbutton" value="Hard Power On!" />
+                    <?php } elseif ( $asleep ) { ?>
         				<input class="btn btn-large btn-primary" type="submit" name="submitbutton" value="Wake Up!"/>
 						<input type="hidden" name="submitbutton" value="Wake Up!"/>  <!-- handle if IE used and enter button pressed instead of wake up button -->
+						<?php if (!is_null($COMPUTER_RELAY_GPIO[$selectedComputer])) { ?>
+							<br /><br />
+							<input class="btn btn-large btn-danger" type="submit" name="submitbutton" value="Hard Power Off!"/>
+						<?php } ?>
                     <?php } else { ?>
 		                <input class="btn btn-large btn-primary" type="submit" name="submitbutton" value="Sleep!"/>
 						<input type="hidden" name="submitbutton" value="Sleep!" />  <!-- handle if IE used and enter button pressed instead of sleep button -->
+						<?php if (!is_null($COMPUTER_RELAY_GPIO[$selectedComputer])) { ?>
+							<br /><br />
+							<input class="btn btn-large btn-danger" type="submit" name="submitbutton" value="Hard Power Off!"/>
+						<?php } ?>
                     <?php } ?>
 	
 			<?php
