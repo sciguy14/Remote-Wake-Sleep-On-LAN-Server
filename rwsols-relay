@@ -2,12 +2,24 @@
 # RWSOLS GPIO Relay Helper
 # Controls a Digital Loggers IOT Relay via Raspberry Pi GPIO.
 # Installed to /usr/local/bin/rwsols-relay by setup.py.
-# Only permits get/on/off operations on valid BCM GPIO pins (0-27).
+# Only permits get/on/off operations on pins explicitly configured in config.php.
 
+CONFIG="/var/www/html/config.php"
 PIN="$2"
 
-if ! [[ "$PIN" =~ ^[0-9]+$ ]] || [ "$PIN" -lt 0 ] || [ "$PIN" -gt 27 ]; then
+if ! [[ "$PIN" =~ ^[0-9]+$ ]]; then
     echo "error: invalid pin" >&2
+    exit 1
+fi
+
+ALLOWED_PINS=$(grep 'COMPUTER_RELAY_GPIO' "$CONFIG" 2>/dev/null | grep -oE 'array\([^)]+' | grep -oE '[0-9]+')
+if [ -z "$ALLOWED_PINS" ]; then
+    echo "error: no pins configured" >&2
+    exit 1
+fi
+
+if ! echo "$ALLOWED_PINS" | grep -qw "$PIN"; then
+    echo "error: pin $PIN not configured" >&2
     exit 1
 fi
 
