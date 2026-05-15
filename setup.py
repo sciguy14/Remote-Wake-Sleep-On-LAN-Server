@@ -76,6 +76,9 @@ def main():
     # Ping Permissions
     run_step('_02_ping_permissions', 'Grant Ping Permission')
 
+    # GPIO Relay Permissions
+    run_step('_02a_gpio_relay_permissions', 'Grant GPIO Relay Permissions')
+
     # Copy our web files to the Apache webroot
     run_step('_03_copy_webroot', 'Copy Unconfigured Webroot', False)
 
@@ -167,20 +170,42 @@ def _02_ping_permissions():
         return False
     return True
 
+# Setup Step 2a: Grant www-data permission to control GPIO pins via pinctrl for hard power relay control.
+def _02a_gpio_relay_permissions():
+    sudoers_file = '/etc/sudoers.d/rwsols-gpio'
+    sudoers_rule = 'www-data ALL=(root) NOPASSWD: /usr/bin/pinctrl\n'
+    try:
+        subprocess.run(['sudo', 'bash', '-c', 'echo "' + sudoers_rule.strip() + '" > ' + sudoers_file], check=True)
+        subprocess.run(['sudo', 'chmod', '440', sudoers_file], check=True)
+        subprocess.run(['sudo', 'usermod', '-aG', 'gpio', 'www-data'], check=True)
+    except subprocess.CalledProcessError:
+        print(yellow("Error setting GPIO relay permissions."))
+        return False
+    return True
+
 # Setup Step 3: Copy unconfigured webroot to default apache directory
 def _03_copy_webroot():
     wol_html_dir = script_dir.joinpath('www/html')
     apache_www_dir = pathlib.Path('/var/www')
     apache_html_dir = apache_www_dir.joinpath('html')
     try:
-        if directories_match(wol_html_dir, apache_html_dir):
+        try:
+            dirs_match = directories_match(wol_html_dir, apache_html_dir)
+        except (PermissionError, ValueError):
+            dirs_match = False
+
+        if dirs_match:
             print(cyan("Apache webroot contents already match local webroot contents. No update to be made."))
         else:
             print(yellow("The Apache webroot contents do not match local webroot."))
-            backup_dir_str = str(apache_www_dir) + "/html_backup_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
-            subprocess.run(['sudo', 'mv', str(apache_html_dir), backup_dir_str], check=True)
-            print(yellow("Apache webroot backed up to " + backup_dir_str))
+            if apache_html_dir.exists():
+                backup_dir_str = str(apache_www_dir) + "/html_backup_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
+                subprocess.run(['sudo', 'mv', str(apache_html_dir), backup_dir_str], check=True)
+                print(yellow("Apache webroot backed up to " + backup_dir_str))
             subprocess.run(['sudo', 'cp', '-R', str(wol_html_dir), str(apache_www_dir)], check=True)
+            subprocess.run(['sudo', 'chown', '-R', 'www-data:www-data', str(apache_html_dir)], check=True)
+            subprocess.run(['sudo', 'find', str(apache_html_dir), '-type', 'd', '-exec', 'chmod', '755', '{}', ';'], check=True)
+            subprocess.run(['sudo', 'find', str(apache_html_dir), '-type', 'f', '-exec', 'chmod', '644', '{}', ';'], check=True)
             print(cyan("Website contents copied to Apache webroot."))
     except Exception as e:
         print(yellow("Error moving website contents to Apache webroot folder."))
