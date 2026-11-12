@@ -1,7 +1,7 @@
 """Interactive remote-access flow used by setup.py: mode, allowlist, Cloudflare Tunnel, Access, removal."""
 import re
 
-from . import access, apache, tunnel
+from . import access, apache, dnscheck, tunnel
 from .cloudflare_api import CloudflareAPI
 from .errors import SetupError
 from .hosts import validate_hostname
@@ -20,7 +20,7 @@ MODE_HELP = [
     'Port forwarding: your router forwards ports 80/443 to this Pi and dynamic DNS keeps a name pointed at your home IP. '
     'Pick this if you already run it that way, or cannot use Cloudflare.',
     'Cloudflare Tunnel: this Pi opens an outbound connection to Cloudflare, so no router ports are needed and your home IP '
-    'stays hidden. Needs a domain on Cloudflare; optional login (Access) in front.',
+    'stays hidden. Needs a domain whose DNS is managed by Cloudflare (checked next); optional login (Access) in front.',
 ]
 DEFAULTS = {'ALLOWED_HOSTS': [], 'ALLOW_LOCALHOST': False, 'LOG_HOST_REJECTIONS': False,
             'TUNNEL_HOSTNAME': None, 'TUNNEL_ORIGIN_BIND': '127.0.0.1', 'TUNNEL_ORIGIN_PORT': 8080,
@@ -37,14 +37,101 @@ ACCESS_SCOPES = [
 ]
 
 
+def _optional_domain(v):
+    v = v.strip()
+    return _tunnel_hostname(v) if v else ''
+
+
+def cloudflare_availability(ctx, current_mode=None):
+    """Work out, before the mode question, whether Cloudflare Tunnel (and with it Access) can be offered.
+
+    Returns (available, reason). `reason` is the sentence shown when the options are skipped. Names already
+    known (the saved tunnel hostname, ddclient's names) are checked first; the user is only asked for a
+    domain when none of them is on Cloudflare. A failed lookup never hides the option. The name that
+    passed is remembered on ctx.cloudflare_base for the tunnel hostname suggestion."""
+    ui = ctx.ui
+    ctx.cloudflare_base = None
+    st = load_state(ctx.state_path) or new_state()
+    saved = st.get('tunnel', {}).get('hostname')
+    ddns = ddclient_hosts(ctx.runner)
+    ui.explain('Is Cloudflare an option for you?', [
+        'Cloudflare Tunnel and Cloudflare Access only work with a domain whose DNS is managed by Cloudflare: the domain\'s '
+        'nameservers point at Cloudflare. The free Cloudflare plan is enough, and the domain can be registered anywhere.',
+        'How the domain\'s IP address is kept up to date does not matter. ddclient on this Pi, the dynamic DNS feature of your '
+        'router, another service, or nothing at all: the tunnel does not use your home IP, so all of these work.',
+        'The check below asks a public DNS server who hosts the domain. It needs no Cloudflare login.'])
+    failed = []
+    unknown = False
+    seen = set()
+
+    def check(name):
+        c = dnscheck.check_domain(ctx.http, name)
+        key = c.zone or c.name
+        if key in seen:
+            return c
+        seen.add(key)
+        if c.status == 'cloudflare':
+            ui.success(dnscheck.describe(c) + ' Cloudflare Tunnel is available.')
+        else:
+            ui.warn(dnscheck.describe(c))
+        return c
+
+    for name in ([saved] if saved else []) + ddns:
+        c = check(name)
+        if c.status == 'cloudflare':
+            if name != saved:
+                ctx.cloudflare_base = name
+            return True, ''
+        if c.status == 'unknown':
+            unknown = True
+        else:
+            failed.append(c)
+    if not unknown:
+        if ddns:
+            ui.say('Your dynamic DNS names (%s) are not on Cloudflare. If you have another domain that is, enter it here.'
+                   % ', '.join(ddns))
+        while True:
+            name = ui.ask('Domain to use with Cloudflare, e.g. example.com (leave blank if you have none)', None,
+                          validator=_optional_domain)
+            if not name:
+                break
+            c = check(name)
+            if c.status == 'cloudflare':
+                ctx.cloudflare_base = name
+                return True, ''
+            if c.status == 'unknown':
+                unknown = True
+                break
+            failed.append(c)
+            ui.say('Enter a different domain, or leave it blank to continue without Cloudflare.')
+    if unknown:
+        ui.hint('The Cloudflare options are shown anyway. The tunnel setup will stop with an error if the domain is not on Cloudflare.')
+        return True, ''
+    if current_mode == 'tunnel':
+        ui.hint('This install already uses Cloudflare Tunnel, so the option stays available.')
+        return True, ''
+    if failed:
+        reason = ' '.join(dnscheck.describe(c) for c in failed[:2])
+    else:
+        reason = 'You did not name a domain whose DNS is managed by Cloudflare.'
+    return False, reason
+
+
 def choose_mode(ctx):
     dflt = default_mode(ctx.repo_dir)
     ctx.ui.heading('Remote access')
     ctx.ui.explain('How will you reach RWSOLS from outside your home network?', MODE_HELP)
+    available, reason = cloudflare_availability(ctx, dflt)
+    order = list(MODE_ORDER)
+    if not available:
+        order.remove('tunnel')
+        ctx.ui.warn('Skipping the Cloudflare Tunnel and Cloudflare Access options. ' + reason)
+        ctx.ui.hint('To use them later: move the domain\'s DNS to Cloudflare (add the site in the Cloudflare dashboard and set the '
+                    'nameservers it shows you at your registrar), then run: python3 setup.py --remote-access')
     if dflt == 'port_forward':
         ctx.ui.hint('An existing port-forwarding based install was detected, so that is the default.')
-    i, _ = ctx.ui.choose('Choose a remote access mode.', [MODE_LABELS[m] for m in MODE_ORDER], MODE_ORDER.index(dflt) + 1)
-    return MODE_ORDER[i - 1]
+    i, _ = ctx.ui.choose('Choose a remote access mode.', [MODE_LABELS[m] for m in order], order.index(dflt) + 1)
+    return order[i - 1]
 
 
 def ddclient_hosts(runner):
@@ -120,8 +207,9 @@ class RemoteAccessWizard(object):
         prev = self.st.get('tunnel', {})
         ddns_names = ddclient_hosts(self.ctx.runner)
         default_host = self.new['TUNNEL_HOSTNAME'] or prev.get('hostname')
-        if not default_host and ddns_names:
-            default_host = 'rwsols.' + ddns_names[0]
+        base = getattr(self.ctx, 'cloudflare_base', None) or (ddns_names[0] if ddns_names else None)
+        if not default_host and base:
+            default_host = 'rwsols.' + base
             try:
                 _tunnel_hostname(default_host)
             except ValueError:
@@ -135,8 +223,16 @@ class RemoteAccessWizard(object):
         if ddns_names:
             lines.append('Dynamic DNS keeps updating %s to your home IP exactly as before. The tunnel hostname is a separate DNS '
                          'record, and the two coexist.' % ', '.join(ddns_names))
+        lines.append('The name must be in a domain whose DNS is managed by Cloudflare. The wizard checks this when you enter it.')
         ui.explain('Tunnel hostname', lines)
-        h = ui.ask('Public hostname for RWSOLS (e.g. rwsols.example.com)', default_host, validator=_tunnel_hostname)
+
+        def on_cloudflare(v):
+            h = _tunnel_hostname(v)
+            c = dnscheck.check_domain(self.ctx.http, h)
+            if c.status in ('other', 'missing'):
+                raise ValueError(dnscheck.describe(c) + ' Use a name in a domain that is on Cloudflare.')
+            return h
+        h = ui.ask('Public hostname for RWSOLS (e.g. rwsols.example.com)', default_host, validator=on_cloudflare)
         self.new['TUNNEL_HOSTNAME'] = h
         if tunnel.ddns_overlap(h, '\n'.join([', '.join(ddns_names)])):
             ui.warn('%s is also in your ddclient host list. The tunnel owns that DNS record (a proxied CNAME); '

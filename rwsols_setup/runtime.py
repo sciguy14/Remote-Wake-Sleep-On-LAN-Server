@@ -167,6 +167,7 @@ class Context(object):
         self.port_free = port_free
         self.hostname_fn = hostname_fn
         self.resolver = resolver or SystemResolver()
+        self.cloudflare_base = None   # name that passed the "DNS is on Cloudflare" check (set by the mode question)
         self.runner = DryRunRunner(runner, ui) if dry_run else runner
         self.config_path = os.path.join(repo_dir, 'www', 'html', 'config.php')
         self.state_path = os.path.join(repo_dir, '.rwsols_remote_access.json')
