@@ -52,6 +52,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Remote-Wake-Sleep-On-LAN-Server (RWSOLS) setup script')
     parser.add_argument('--remote-access', action='store_true', help='Only run the remote access part (mode, hostname allowlist, Cloudflare Tunnel/Access).')
     parser.add_argument('--remove-tunnel', action='store_true', help='Remove the Cloudflare Tunnel setup created by this script.')
+    parser.add_argument('--auto-updates', action='store_true', help='Only run the automatic security updates step (unattended-upgrades).')
     parser.add_argument('--dry-run', action='store_true', help='With --remote-access/--remove-tunnel: print what would be done and change nothing (read-only API calls still happen).')
     parser.add_argument('--force', action='store_true', help='With --remote-access: replace a conflicting DNS record for the tunnel hostname.')
     args = parser.parse_args()
@@ -72,6 +73,10 @@ def main():
     from rwsols_setup import wizard
     from rwsols_setup.errors import SetupError
     ctx = make_context(args)
+
+    if args.auto_updates:
+        _09b_auto_updates()
+        return
 
     if args.remove_tunnel or args.remote_access:
         try:
@@ -142,6 +147,9 @@ def main():
 
     # Security-Harden PHP installation
     run_step('_09_secure_php', 'Secure the PHP Installation')
+
+    # Offer automatic security updates for the operating system (asked once)
+    run_step('_09b_auto_updates', 'Automatic Security Updates')
 
     # Create user copy of config file
     run_step('_10_prep_config_file', 'Generate Default WOL Config File', False)
@@ -630,6 +638,21 @@ def _09_secure_php():
         return False
     return True
     
+# Step 9b: Offer to turn on automatic security updates (unattended-upgrades). Declining is fine and is not asked again.
+def _09b_auto_updates():
+    from rwsols_setup import hardening
+    from rwsols_setup.errors import SetupError
+    from rwsols_setup.runtime import SystemRunner
+    try:
+        hardening.run_auto_updates_step(SystemRunner(), ui)
+    except SetupError as e:
+        # Not fatal: RWSOLS works without it. Tell the user how to do it by hand or retry.
+        ui.warn("Automatic security updates could not be enabled:")
+        ui.warn(str(e))
+        ui.say("You can set this up yourself with: sudo apt install unattended-upgrades")
+        ui.say("To have this script try again, delete the '._09b_auto_updates' dot file in this folder and re-run it.")
+    return True
+
 # Step 10: Generate default config file for WOL page if one doesn't already exist
 def _10_prep_config_file():
     if rwsols_config_user.exists():
