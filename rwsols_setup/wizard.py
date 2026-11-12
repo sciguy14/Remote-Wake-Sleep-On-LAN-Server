@@ -149,6 +149,32 @@ def ddclient_hosts(runner):
     return hosts
 
 
+def ddclient_cloudflare_token(runner):
+    """The API token ddclient uses for Cloudflare dynamic DNS, or None.
+
+    Only returned when /etc/ddclient.conf is unambiguous: every protocol= is cloudflare, every login= is
+    the literal "token" (an API token, not the account-wide Global API Key), and there is one password.
+    The value is only ever held in memory; it is never printed, logged or written anywhere."""
+    raw = runner.read_file('/etc/ddclient.conf')
+    if not raw:
+        return None
+    text = raw.decode('utf8', 'replace').replace('\\\n', ' ')
+    text = '\n'.join(l for l in text.splitlines() if not l.lstrip().startswith('#'))
+
+    def values(key):
+        found = re.findall(r'(?:^|[\s,])' + key + r'=(\'[^\']*\'|"[^"]*"|[^\s,]+)', text)
+        return [v[1:-1] if v[:1] in '\'"' else v for v in found]
+    protocols, logins, passwords = values('protocol'), values('login'), set(values('password'))
+    if not protocols or any(p != 'cloudflare' for p in protocols):
+        return None
+    if not logins or any(l != 'token' for l in logins):
+        return None
+    if len(passwords) != 1:
+        return None
+    token = passwords.pop()
+    return token if len(token) >= 20 else None
+
+
 def read_settings(cfg):
     return dict((k, cfg.get(k, v)) for k, v in DEFAULTS.items())
 
@@ -422,12 +448,16 @@ class RemoteAccessWizard(object):
         ui = self.ui
         token = self.ctx.env.pop('CLOUDFLARE_API_TOKEN', None)
         if not token:
+            api = self._try_ddclient_token()
+            if api:
+                self._api = api
+                return api
             lines = [
                 'The wizard needs it to create the tunnel and the DNS record (and the Access login) in your Cloudflare account.',
                 'It is used only during this run, kept in memory and never written to disk or config.',
                 'Create it at https://dash.cloudflare.com/profile/api-tokens with at least these permissions:']
             lines += ['    ' + x for x in TOKEN_SCOPES]
-            if self.access_mode == 'automatic' or self.st.get('access', {}).get('app_id'):
+            if self._needs_access_scopes():
                 lines.append('  and for Cloudflare Access:')
                 lines += ['    ' + x for x in ACCESS_SCOPES]
             lines.append('(Or set the CLOUDFLARE_API_TOKEN environment variable and re-run.)')
@@ -437,6 +467,71 @@ class RemoteAccessWizard(object):
             raise SetupError('No API token provided.')
         self._api = CloudflareAPI(token, self.ctx.http, ui, self.ctx.dry_run)
         return self._api
+
+    def _needs_access_scopes(self):
+        return self.access_mode == 'automatic' or bool(self.st.get('access', {}).get('app_id'))
+
+    def _token_gaps(self, api):
+        """What `api`'s token cannot do for this run, as a list of sentences (empty = it looks sufficient).
+        Read-only calls: they prove the token can see the zone, the account's tunnels and Access, not that
+        it may change them. A token with read-only permissions still fails later, with a clear error."""
+        hostname = self.new.get('TUNNEL_HOSTNAME') or self.st.get('tunnel', {}).get('hostname')
+        if not hostname:
+            return ['no tunnel hostname is known yet']
+        account = None
+        try:
+            labels = hostname.split('.')
+            for i in range(len(labels) - 1):
+                res = api.get('/zones', {'name': '.'.join(labels[i:])})
+                if res:
+                    account = (res[0].get('account') or {}).get('id')
+                    break
+        except SetupError:
+            return ['Cloudflare rejected it when looking up the zone (the token may have been revoked).']
+        if not account:
+            return ['it cannot see the Cloudflare zone of %s (needs Zone > Zone > Read for that zone).' % hostname]
+        gaps = []
+        try:
+            api.get('/accounts/%s/cfd_tunnel' % account, {'name': self.tunnel_name, 'is_deleted': 'false'})
+        except SetupError:
+            gaps.append('it lacks the permission Account > Cloudflare Tunnel > Edit.')
+        if self._needs_access_scopes():
+            try:
+                api.get('/accounts/%s/access/apps' % account)
+            except SetupError:
+                gaps.append('it lacks the permission Account > Access: Apps and Policies > Edit.')
+        return gaps
+
+    def _try_ddclient_token(self):
+        """Offer the Cloudflare API token that ddclient already uses for dynamic DNS. Returns a ready
+        CloudflareAPI, or None when there is no such token, the user declines, or it lacks permissions."""
+        ui = self.ui
+        token = ddclient_cloudflare_token(self.ctx.runner)
+        if not token:
+            return None
+        ui.explain('Reuse the dynamic DNS token?', [
+            'ddclient on this Pi already has a Cloudflare API token for dynamic DNS (in /etc/ddclient.conf). The wizard can '
+            'use the same one, so you do not have to create and paste another.',
+            'It only works if that token also has the permissions listed below. A token made just for dynamic DNS usually has '
+            'the two Zone permissions but not the Tunnel one. The wizard checks, and tells you what is missing.',
+            'Needed:'] + ['    ' + x for x in TOKEN_SCOPES]
+            + (['  and for Cloudflare Access:'] + ['    ' + x for x in ACCESS_SCOPES] if self._needs_access_scopes() else [])
+            + ['Trade-off: the ddclient token stays on this Pi permanently, so adding permissions to it means a more powerful '
+               'token is stored here for good. A separate token that you paste once and then delete in the Cloudflare dashboard '
+               'is the tighter choice. Both work.'])
+        if not ui.confirm('Check whether the dynamic DNS token can be used?', True):
+            return None
+        api = CloudflareAPI(token, self.ctx.http, ui, self.ctx.dry_run)
+        gaps = self._token_gaps(api)
+        if not gaps:
+            ui.success('The dynamic DNS token has the permissions this needs. Using it; nothing to paste.')
+            return api
+        ui.warn('The dynamic DNS token cannot be used as it is:')
+        for g in gaps:
+            ui.warn('  - ' + g)
+        ui.say('To reuse it, add the missing permission in the Cloudflare dashboard (My Profile > API Tokens > Edit on that '
+               'token) and run this again. Or paste a different token now.')
+        return None
 
     def prepare_cloud(self):
         """Talks to Cloudflare (automatic) or collects the pasted token (manual). May write state."""
