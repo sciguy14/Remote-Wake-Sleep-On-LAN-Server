@@ -1,3 +1,5 @@
 config.php
 Thumbs.db
 .setup_progress*
+__pycache__/
+.rwsols_remote_access.json
