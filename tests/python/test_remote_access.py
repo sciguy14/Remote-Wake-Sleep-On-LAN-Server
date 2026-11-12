@@ -480,6 +480,27 @@ class MiscTests(unittest.TestCase):
         self.assertFalse(tunnel.ddns_overlap('example.com', conf))
         self.assertFalse(tunnel.ddns_overlap(HOST, '#wol.example.com\n'))
 
+    def test_ddns_names_not_carried_into_tunnel_allowlist(self):
+        ddclient = (b'protocol=dyndns2\nlogin=u\npassword=p\nhome.example.com\n', None)
+        config = fakes.FAKE_CONFIG.replace('?>', "$ALLOWED_HOSTS = array('home.example.com', 'raspberrypi.local');\n?>")
+        self.assertIn('$ALLOWED_HOSTS', config)
+
+        runner = FakeRunner()
+        runner.files['/etc/ddclient.conf'] = ddclient
+        env = Env(TUNNEL_RULES, runner=runner, config=config)
+        self.addCleanup(env.cleanup)
+        w = wizard.RemoteAccessWizard(env.ctx, 'tunnel', [], None)
+        w.plan()
+        self.assertIn('Not suggesting home.example.com', env.ui.text())
+
+        runner = FakeRunner()
+        runner.files['/etc/ddclient.conf'] = ddclient
+        env = Env(runner=runner, config=config)
+        self.addCleanup(env.cleanup)
+        w = wizard.RemoteAccessWizard(env.ctx, 'port_forward', ['home.example.com'], None)
+        w.plan()
+        self.assertNotIn('Not suggesting', env.ui.text())
+
     def test_wizard_warns_on_ddclient_overlap(self):
         runner = FakeRunner()
         runner.files['/etc/ddclient.conf'] = (b'protocol=dyndns2\nlogin=u\npassword=p\nwol.example.com,home.example.com\n', None)

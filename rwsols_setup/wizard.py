@@ -176,7 +176,15 @@ class RemoteAccessWizard(object):
             cands.append(validate_hostname(self.ctx.hostname_fn().split('.')[0] + '.local'))
         except ValueError:
             pass
-        cands += list(self.cur['ALLOWED_HOSTS'])
+        existing = list(self.cur['ALLOWED_HOSTS'])
+        if self.mode != 'port_forward':
+            # DDNS names only matter for port forwarding; do not carry them into a LAN-only or tunnel setup.
+            ddns = set(ddclient_hosts(self.ctx.runner)) - set([self.new['TUNNEL_HOSTNAME']])
+            dropped = [h for h in existing if h in ddns]
+            existing = [h for h in existing if h not in ddns]
+            if dropped:
+                ui.say('Not suggesting %s (DDNS name used for port forwarding). Add it back below if you still use it.' % ', '.join(dropped))
+        cands += existing
         if self.lan_ip and ui.confirm('Also allow browsing by LAN IP %s?' % self.lan_ip, False):
             cands.append(self.lan_ip)
         suggestion = []
@@ -373,7 +381,9 @@ class RemoteAccessWizard(object):
 def run_remote_access(ctx, suggested_hosts=(), lan_ip=None, copy_webroot=None, mode=None):
     """Standalone `--remote-access`: mode question, plan, cloud, config, copy webroot, apply."""
     mode = mode or choose_mode(ctx)
-    w = RemoteAccessWizard(ctx, mode, suggested_hosts or ddclient_hosts(ctx.runner), lan_ip, copy_webroot)
+    if not suggested_hosts and mode == 'port_forward':
+        suggested_hosts = ddclient_hosts(ctx.runner)
+    w = RemoteAccessWizard(ctx, mode, suggested_hosts, lan_ip, copy_webroot)
     w.plan()
     w.prepare_cloud()
     w.write_config()
