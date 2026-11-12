@@ -150,6 +150,8 @@ class FakeCloudflare(object):
         self.ns = {zone: ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'],   # public NS records per zone
                    'elsewhere.example.net': ['ns1.dns-host.example', 'ns2.dns-host.example']}
         self.doh_calls = []
+        self.limited_tokens = {}  # extra valid API tokens -> path fragments they are NOT allowed to call
+        self.tokens_used = []
         self.web = {}            # url -> (status, body) overrides for non-API fetches
         self.web_calls = []
         self.fail_with = None    # (status, message) to force an API failure
@@ -177,8 +179,13 @@ class FakeCloudflare(object):
         u = urlparse(url)
         path, q = u.path[len('/client/v4'):], dict((k, v[0]) for k, v in parse_qs(u.query).items())
         data = json.loads(body.decode()) if body else None
-        assert headers.get('Authorization') == 'Bearer ' + API_TOKEN, 'missing/incorrect bearer token'
+        bearer = headers.get('Authorization', '')[len('Bearer '):]
+        assert bearer == API_TOKEN or bearer in self.limited_tokens, 'missing/incorrect bearer token'
         self.calls.append((method, path, data))
+        self.tokens_used.append(bearer)
+        if any(part in path for part in self.limited_tokens.get(bearer, ())):
+            return HttpResponse(403, json.dumps({'success': False, 'errors': [{'code': 10000, 'message': 'Authentication error'}],
+                                                 'result': None}).encode(), {})
         if self.fail_with:
             return self._err(*self.fail_with)
         res = self._route(method, path, q, data)
