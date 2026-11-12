@@ -121,13 +121,13 @@ class RemoteAccessWizard(object):
         ddns_names = ddclient_hosts(self.ctx.runner)
         default_host = self.new['TUNNEL_HOSTNAME'] or prev.get('hostname')
         if not default_host and ddns_names:
-            default_host = 'wol.' + ddns_names[0]
+            default_host = 'rwsols.' + ddns_names[0]
             try:
                 _tunnel_hostname(default_host)
             except ValueError:
                 default_host = None
         lines = [
-            'A dedicated subdomain (e.g. wol.example.com) is recommended over the bare domain (example.com).',
+            'A dedicated subdomain (e.g. rwsols.example.com) is recommended over the bare domain (example.com).',
             'The tunnel takes over that name\'s DNS record (a proxied CNAME to Cloudflare). On its own name, RWSOLS leaves the '
             'bare domain free for dynamic DNS or a website, and you can add other tunnelled services later, each on its own name '
             '(e.g. nas.example.com).',
@@ -136,7 +136,7 @@ class RemoteAccessWizard(object):
             lines.append('Dynamic DNS keeps updating %s to your home IP exactly as before. The tunnel hostname is a separate DNS '
                          'record, and the two coexist.' % ', '.join(ddns_names))
         ui.explain('Tunnel hostname', lines)
-        h = ui.ask('Public hostname for RWSOLS (e.g. wol.example.com)', default_host, validator=_tunnel_hostname)
+        h = ui.ask('Public hostname for RWSOLS (e.g. rwsols.example.com)', default_host, validator=_tunnel_hostname)
         self.new['TUNNEL_HOSTNAME'] = h
         if tunnel.ddns_overlap(h, '\n'.join([', '.join(ddns_names)])):
             ui.warn('%s is also in your ddclient host list. The tunnel owns that DNS record (a proxied CNAME); '
