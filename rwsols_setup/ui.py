@@ -16,12 +16,17 @@ Public interface (everything the package and setup.py use):
     confirm(prompt, default)            yes/no, Enter = default
     choose(query, options, default)     single select, returns (1-based index, option)
     choose_many(query, options, ...)    multi select with reasons, returns the selected values in display order
+
+RichUI drives choose/choose_many with the arrow keys (Up/Down, Space, Enter) when it can read single keys
+from the terminal (termios, i.e. Linux/macOS on a real TTY). Everywhere else, and after any error in that
+path, the numbered prompts in BaseUI are used; they need nothing but a line of input.
     checklist(title, rows)              rows of (label, ok, detail)
 """
 import getpass
 import importlib
 import os
 import re
+import select
 import shutil
 import subprocess
 import sys
@@ -228,6 +233,58 @@ class BaseUI(object):
             return
 
 
+class TtyKeys(object):
+    """Reads single key presses from a terminal. Use as a context manager: the terminal is in cbreak mode
+    inside the block and restored on exit. read() returns 'up', 'down', 'enter', 'space', a lowercase
+    character, or None for a key that means nothing here. Raises ImportError where termios is missing."""
+
+    def __init__(self, stream=None):
+        import termios
+        import tty
+        self._termios, self._tty = termios, tty
+        self._fd = (sys.stdin if stream is None else stream).fileno()
+        self._saved = None
+
+    def __enter__(self):
+        self._saved = self._termios.tcgetattr(self._fd)
+        self._tty.setcbreak(self._fd)
+        return self
+
+    def __exit__(self, *exc):
+        if self._saved is not None:
+            self._termios.tcsetattr(self._fd, self._termios.TCSADRAIN, self._saved)
+            self._saved = None
+        return False
+
+    def _byte(self):
+        b = os.read(self._fd, 1)
+        if not b or b == b'\x04':
+            raise EOFError
+        return b
+
+    def read(self):
+        b = self._byte()
+        if b == b'\x03':
+            raise KeyboardInterrupt
+        if b in (b'\r', b'\n'):
+            return 'enter'
+        if b == b' ':
+            return 'space'
+        if b == b'\x1b':
+            # Arrow keys arrive as ESC [ A / ESC O A (up) and ESC [ B / ESC O B (down).
+            seq = b''
+            while len(seq) < 8 and select.select([self._fd], [], [], 0.05)[0]:
+                seq += os.read(self._fd, 1)
+                if len(seq) >= 2 and (seq[-1:].isalpha() or seq[-1:] == b'~'):
+                    break
+            if len(seq) == 2 and seq[:1] in (b'[', b'O'):
+                return {b'A': 'up', b'B': 'down'}.get(seq[1:])
+            return None
+        if b[0] < 0x20 or b[0] > 0x7e:
+            return None
+        return b.decode('ascii').lower()
+
+
 def _term_width():
     return max(40, min(shutil.get_terminal_size((80, 24)).columns, 100))
 
@@ -326,7 +383,7 @@ class PlainUI(BaseUI):
 class RichUI(BaseUI):
     """Uses the optional `rich` package (python3-rich on Raspberry Pi OS)."""
 
-    def __init__(self, console=None):
+    def __init__(self, console=None, keys='auto'):
         from rich import box
         from rich.console import Console
         from rich.panel import Panel
@@ -334,6 +391,18 @@ class RichUI(BaseUI):
         from rich.text import Text
         self._box_style, self._Panel, self._Table, self._Text = box, Panel, Table, Text
         self.console = console or Console(highlight=False)
+        # Arrow-key selection needs rich.live and a way to read single keys; without either, `_keys` stays
+        # None and the numbered prompts are used.
+        self._keys = None
+        try:
+            from rich.live import Live
+            self._Live = Live
+            if keys == 'auto':
+                usable = _isatty(sys.stdin) and self.console.is_terminal and os.environ.get('TERM') != 'dumb'
+                keys = TtyKeys() if usable else None
+            self._keys = keys
+        except Exception:
+            self._keys = None
 
     def _t(self, text, style=None):
         return self._Text(text, style=RICH.get(style, '') or '')
@@ -382,6 +451,148 @@ class RichUI(BaseUI):
             else:
                 table.add_row(self._t('  FAIL', 'error'), self._t(label + (' (%s)' % detail if detail else ''), 'error'))
         self.console.print(table)
+
+    # ----- arrow-key selection -----
+
+    def _keys_fit(self, lines):
+        """True when single-key input is available and a list of about `lines` lines fits on the screen
+        (a live-updated list taller than the terminal cannot be redrawn cleanly)."""
+        if self._keys is None:
+            return False
+        try:
+            return lines <= self.console.size.height
+        except Exception:
+            return False
+
+    def _live_loop(self, render, on_key):
+        """Draw render(), read a key, call on_key(key); repeat until on_key returns something other than None.
+        The list is erased on exit, and the caller prints a permanent record of the answer."""
+        with self._Live(render(), console=self.console, auto_refresh=False, transient=True) as live:
+            with self._keys as keys:
+                while True:
+                    live.update(render(), refresh=True)
+                    result = on_key(keys.read())
+                    if result is not None:
+                        return result
+
+    def _keys_failed(self):
+        self._keys = None
+        self.hint('(Arrow-key selection is not available in this terminal; using numbered choices.)')
+
+    def _key_table(self, rows, cursor, hint, message=''):
+        """rows: lists of (text, style) cells. The row under the cursor gets a marker and a highlight."""
+        table = self._Table(box=None, show_header=False, show_edge=False, pad_edge=False)
+        for i in range(len(rows[0]) + 1):
+            table.add_column(overflow='fold', no_wrap=(i < len(rows[0])))
+        for i, cells in enumerate(rows):
+            here = i == cursor
+            table.add_row(self._t('>' if here else ' ', 'heading'),
+                          *[self._Text(t, style='bold cyan' if here else (RICH.get(st, '') or '')) for t, st in cells])
+        foot = self._Text('\n' + hint, style=RICH['hint'])
+        if message:
+            foot.append('\n' + message, style=RICH['warn'])
+        table.caption, table.caption_justify, table.caption_style = foot, 'left', ''
+        return table
+
+    def choose(self, query, options, default=None):
+        options = list(options)
+        if self._keys_fit(len(options) + 6):
+            try:
+                return self._choose_keys(query, options, default)
+            except EOFError:
+                self._eof()
+            except Exception:
+                self._keys_failed()
+        return BaseUI.choose(self, query, options, default)
+
+    def _choose_keys(self, query, options, default):
+        state = {'cur': (default or 1) - 1}
+        n = len(options)
+
+        def render():
+            rows = [[('%d)' % (i + 1), None), (o + ('  (default)' if default == i + 1 else ''), None)]
+                    for i, o in enumerate(options)]
+            return self._key_table(rows, state['cur'], 'Up/Down to move, Enter to select (or type the number)')
+
+        def on_key(key):
+            if key == 'up':
+                state['cur'] = (state['cur'] - 1) % n
+            elif key == 'down':
+                state['cur'] = (state['cur'] + 1) % n
+            elif key and key.isdigit() and 1 <= int(key) <= n:
+                state['cur'] = int(key) - 1
+            elif key == 'enter':
+                return True
+            return None
+
+        self._print('')
+        self._print(query, 'prompt')
+        self._live_loop(render, on_key)
+        i = state['cur']
+        self.console.print(self._Text.assemble(('> ', RICH['heading']), (options[i], RICH['default'])))
+        return i + 1, options[i]
+
+    def choose_many(self, query, options, validator=None, min_selected=1, add_prompt='Name to add'):
+        opts = [as_option(o) for o in options]
+        if self._keys_fit(2 * len(opts) + 8):
+            try:
+                return self._choose_many_keys(query, opts, validator, min_selected, add_prompt)
+            except EOFError:
+                self._eof()
+            except Exception:
+                self._keys_failed()
+        return BaseUI.choose_many(self, query, opts, validator, min_selected, add_prompt)
+
+    def _choose_many_keys(self, query, opts, validator, min_selected, add_prompt):
+        opts = list(opts)
+        sel = [bool(o.locked or o.checked) for o in opts]
+        state = {'cur': 0, 'msg': ''}
+
+        def render():
+            rows = []
+            for i, o in enumerate(opts):
+                why = ('required: ' + o.why) if o.locked else o.why
+                rows.append([('[x]' if sel[i] else '[ ]', 'success' if sel[i] else 'hint'), (o.value, None), (why, 'hint')])
+            return self._key_table(rows, state['cur'], 'Up/Down to move, Space to tick/untick, a to add your own, Enter to accept',
+                                   state['msg'])
+
+        def toggle(i):
+            if opts[i].locked:
+                state['msg'] = '%s is required and cannot be unticked.' % opts[i].value
+            else:
+                sel[i] = not sel[i]
+
+        def on_key(key):
+            state['msg'] = ''
+            n = len(opts)
+            if key == 'up':
+                state['cur'] = (state['cur'] - 1) % n
+            elif key == 'down':
+                state['cur'] = (state['cur'] + 1) % n
+            elif key in ('space', 'x'):
+                toggle(state['cur'])
+            elif key and key.isdigit() and 1 <= int(key) <= n:
+                state['cur'] = int(key) - 1
+                toggle(state['cur'])
+            elif key == 'a':
+                return 'add'
+            elif key == 'enter':
+                if sum(sel) < min_selected:
+                    state['msg'] = 'Select at least %d %s.' % (min_selected, 'entry' if min_selected == 1 else 'entries')
+                else:
+                    return 'done'
+            return None
+
+        self._print('')
+        self._print(query, 'prompt')
+        while self._live_loop(render, on_key) == 'add':
+            before = len(opts)
+            self._add_entry(opts, sel, validator, add_prompt)
+            if len(opts) > before:
+                state['cur'] = len(opts) - 1
+        rows = [['[x]' if s else '[ ]', o.value, ('required: ' + o.why) if o.locked else o.why] for o, s in zip(opts, sel)]
+        self._table(['', 'Name', 'Why'], rows)
+        return [o.value for o, s in zip(opts, sel) if s]
 
     def _prompt(self, segments):
         return self._Text.assemble(*[(t, RICH.get(s, '')) if s else t for t, s in segments])
