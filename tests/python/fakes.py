@@ -224,13 +224,30 @@ class FakeCloudflare(object):
         raise AssertionError('unexpected API call %s %s' % (m, p))
 
 
+class FakeResolver(object):
+    """Injectable DNS: reverse = {ip: name}, forward = {name: [ips]}. Never raises, like the real one."""
+
+    def __init__(self, reverse=None, forward=None):
+        self.rev = dict(reverse or {})
+        self.fwd = dict(forward or {})
+
+    def reverse(self, ip):
+        return self.rev.get(ip)
+
+    def forward(self, name):
+        return list(self.fwd.get(name, []))
+
+
 class ScriptedUI(object):
-    """Answers prompts by substring rules; unmatched prompts take their default."""
+    """Answers prompts by substring rules; unmatched prompts take their default.
+    choose_many rules: a list of values = exactly those ticked (locked entries are always included;
+    values that are not options count as added by the user). No rule = the default ticks."""
 
     def __init__(self, rules=None, secrets=None):
         self.rules = list(rules or [])
         self.secrets = list(secrets or [])
         self.out = []
+        self.many_calls = []     # dicts: query, options, result
 
     def _match(self, prompt):
         for sub, ans in self.rules:
@@ -241,18 +258,42 @@ class ScriptedUI(object):
     def say(self, text=''):
         self.out.append(text)
 
-    warn = say
+    warn = error = success = info = hint = heading = say
 
-    def ask(self, prompt, default=None):
+    def pause(self, text=''):
+        self.out.append(text)
+
+    def explain(self, title, lines, style='accent'):
+        self.out.append(title)
+        self.out.extend(ln[0] if isinstance(ln, tuple) else ln for ln in lines)
+
+    def summary(self, title, lines, warnings=()):
+        self.explain(title, list(lines) + list(warnings))
+
+    def checklist(self, title, rows):
+        self.out.append(title)
+        for label, ok, detail in rows:
+            self.out.append('[ok] %s' % label if ok else '[FAIL] %s (%s)' % (label, detail))
+
+    def ask(self, prompt, default=None, validator=None):
         self.out.append(prompt)
-        hit, ans = self._match(prompt)
-        if hit:
-            if isinstance(ans, list):
-                ans = ans.pop(0) if len(ans) > 1 else ans[0]
-            return ans
-        return default or ''
+        for _ in range(50):
+            hit, ans = self._match(prompt)
+            if hit:
+                if isinstance(ans, list):
+                    ans = ans.pop(0) if len(ans) > 1 else ans[0]
+                raw = ans
+            else:
+                raw = default or ''
+            if validator is None:
+                return raw
+            try:
+                return validator(raw)
+            except ValueError as e:
+                self.warn(str(e))
+        raise AssertionError('ScriptedUI.ask kept failing validation for %r' % prompt)
 
-    def ask_secret(self, prompt):
+    def ask_secret(self, prompt, strip=True):
         self.out.append(prompt)
         return self.secrets.pop(0)
 
@@ -267,14 +308,29 @@ class ScriptedUI(object):
         i = ans if hit else (default or 1)
         return i, options[i - 1]
 
+    def choose_many(self, query, options, validator=None, min_selected=1, add_prompt='Name to add'):
+        from rwsols_setup.ui import as_option
+        self.out.append(query)
+        opts = [as_option(o) for o in options]
+        hit, ans = self._match(query)
+        if hit:
+            wanted = [validator(v) if validator else v for v in ans]
+            result = [o.value for o in opts if o.locked or o.value in wanted]
+            result += [v for v in wanted if v not in [o.value for o in opts]]
+        else:
+            result = [o.value for o in opts if o.locked or o.checked]
+        self.many_calls.append({'query': query, 'options': opts, 'result': result})
+        return result
+
     def text(self):
-        return '\n'.join(self.out)
+        return chr(10).join(self.out)
 
 
 class Env(object):
     """A temp repo dir + context with all fakes wired up."""
 
-    def __init__(self, rules=None, secrets=None, dry_run=False, force=False, runner=None, cf=None, config=FAKE_CONFIG, token=True):
+    def __init__(self, rules=None, secrets=None, dry_run=False, force=False, runner=None, cf=None, config=FAKE_CONFIG, token=True,
+                 resolver=None):
         self.dir = tempfile.mkdtemp()
         os.makedirs(os.path.join(self.dir, 'www', 'html'))
         self.config_path = os.path.join(self.dir, 'www', 'html', 'config.php')
@@ -285,6 +341,7 @@ class Env(object):
         self.ui = ScriptedUI(rules, secrets)
         self.dry_run, self.force = dry_run, force
         self.token = token
+        self.resolver = resolver or FakeResolver()
         self.make_ctx()
 
     def make_ctx(self, rules=None, secrets=None):
@@ -292,7 +349,7 @@ class Env(object):
             self.ui = ScriptedUI(rules, secrets)
         env = {'CLOUDFLARE_API_TOKEN': API_TOKEN} if self.token else {}
         self.ctx = Context(self.runner, self.cf, self.ui, self.dir, dry_run=self.dry_run, force=self.force, env=env,
-                           sleep=lambda s: None, port_free=lambda b, p: True, hostname_fn=lambda: 'raspberrypi')
+                           sleep=lambda s: None, port_free=lambda b, p: True, hostname_fn=lambda: 'raspberrypi', resolver=self.resolver)
         return self.ctx
 
     def config(self):

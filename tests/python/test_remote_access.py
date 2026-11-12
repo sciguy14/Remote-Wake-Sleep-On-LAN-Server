@@ -292,18 +292,18 @@ class RemoveTests(unittest.TestCase):
 
 class AllowlistTests(unittest.TestCase):
     def test_allowlist_written_and_conf_applied(self):
-        env = Env([('Enable the hostname allowlist', 1), ('Allowed host names', 'a.example.com, RaspberryPi.local')])
+        env = Env([('Enable the hostname allowlist', 1), ('Allowed host names', ['raspberrypi.local', 'A.example.com'])])
         self.addCleanup(env.cleanup)
         w = wizard.RemoteAccessWizard(env.ctx, 'none', [], None)
         w.plan()
         w.write_config()
         w.apply_local()
-        self.assertIn("$ALLOWED_HOSTS = array('a.example.com', 'raspberrypi.local');", env.config())
+        self.assertIn("$ALLOWED_HOSTS = array('raspberrypi.local', 'a.example.com');", env.config())
         self.assertIn(apache.ALLOWED_CONF_PATH, env.runner.files)
         self.assertIn(['a2enconf', 'rwsols-allowed-hosts'], env.runner.argvs())
 
     def test_tunnel_hostname_always_added(self):
-        env = Env(TUNNEL_RULES + [('Enable the hostname allowlist', 1), ('Allowed host names', 'raspberrypi.local')])
+        env = Env(TUNNEL_RULES + [('Enable the hostname allowlist', 1), ('Allowed host names', ['raspberrypi.local'])])
         self.addCleanup(env.cleanup)
         w = wizard.RemoteAccessWizard(env.ctx, 'tunnel', [], None)
         w.plan()
@@ -321,7 +321,7 @@ class AllowlistTests(unittest.TestCase):
         self.assertEqual([c for c in env.runner.mutations], [])
 
     def test_disable_removes_conf(self):
-        env = Env([('Enable the hostname allowlist', 1), ('Allowed host names', 'a.example.com')])
+        env = Env([('Enable the hostname allowlist', 1), ('Allowed host names', ['a.example.com'])])
         self.addCleanup(env.cleanup)
         w = wizard.RemoteAccessWizard(env.ctx, 'none', [], None)
         w.plan(); w.write_config(); w.apply_local()
@@ -480,7 +480,7 @@ class MiscTests(unittest.TestCase):
         self.assertFalse(tunnel.ddns_overlap('example.com', conf))
         self.assertFalse(tunnel.ddns_overlap(HOST, '#wol.example.com\n'))
 
-    def test_ddns_names_not_carried_into_tunnel_allowlist(self):
+    def test_ddns_names_listed_but_unticked_outside_port_forwarding(self):
         ddclient = (b'protocol=dyndns2\nlogin=u\npassword=p\nhome.example.com\n', None)
         config = fakes.FAKE_CONFIG.replace('?>', "$ALLOWED_HOSTS = array('home.example.com', 'raspberrypi.local');\n?>")
         self.assertIn('$ALLOWED_HOSTS', config)
@@ -491,7 +491,12 @@ class MiscTests(unittest.TestCase):
         self.addCleanup(env.cleanup)
         w = wizard.RemoteAccessWizard(env.ctx, 'tunnel', [], None)
         w.plan()
-        self.assertIn('Not suggesting home.example.com', env.ui.text())
+        self.assertNotIn('Not suggesting', env.ui.text())
+        opts = dict((o.value, o) for o in env.ui.many_calls[-1]['options'])
+        self.assertFalse(opts['home.example.com'].checked)
+        self.assertIn('port forward', opts['home.example.com'].why)
+        self.assertNotIn('home.example.com', w.new['ALLOWED_HOSTS'])
+        self.assertIn('raspberrypi.local', w.new['ALLOWED_HOSTS'])
 
         runner = FakeRunner()
         runner.files['/etc/ddclient.conf'] = ddclient
@@ -499,7 +504,9 @@ class MiscTests(unittest.TestCase):
         self.addCleanup(env.cleanup)
         w = wizard.RemoteAccessWizard(env.ctx, 'port_forward', ['home.example.com'], None)
         w.plan()
-        self.assertNotIn('Not suggesting', env.ui.text())
+        opts = dict((o.value, o) for o in env.ui.many_calls[-1]['options'])
+        self.assertTrue(opts['home.example.com'].checked)
+        self.assertIn('home.example.com', w.new['ALLOWED_HOSTS'])
 
     def test_wizard_warns_on_ddclient_overlap(self):
         runner = FakeRunner()
