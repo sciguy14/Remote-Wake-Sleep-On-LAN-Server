@@ -376,14 +376,14 @@ class AllowlistOptionTests(unittest.TestCase):
 
 
 class TunnelHostnameDefaultTests(unittest.TestCase):
-    def test_default_is_wol_subdomain_of_first_ddclient_name(self):
+    def test_default_is_rwsols_subdomain_of_first_ddclient_name(self):
         runner = FakeRunner()
         runner.files['/etc/ddclient.conf'] = (b'protocol=dyndns2\nlogin=u\npassword=p\nhome.example.com, other.example.com\n', None)
         env = Env(runner=runner)
         self.addCleanup(env.cleanup)
         w = wizard.RemoteAccessWizard(env.ctx, 'tunnel', [], None)
         w.plan()
-        self.assertEqual(w.new['TUNNEL_HOSTNAME'], 'wol.home.example.com')
+        self.assertEqual(w.new['TUNNEL_HOSTNAME'], 'rwsols.home.example.com')
         text = env.ui.text()
         self.assertIn('Dynamic DNS keeps updating home.example.com, other.example.com to your home IP exactly as before', text)
         self.assertIn('the two coexist', text)
@@ -484,6 +484,138 @@ class RichSmokeTests(unittest.TestCase):
         text = out.getvalue()
         for want in ('Section', 'Why', '[not markup]', 'careful', 'HTTP 502', 'why a', '[x]', '[ ]'):
             self.assertIn(want, text)
+
+
+class ScriptedKeys(object):
+    """Stands in for ui.TtyKeys: hands out a fixed list of key names."""
+
+    def __init__(self, keys):
+        self.keys = list(keys)
+        self.entered = 0
+
+    def __enter__(self):
+        self.entered += 1
+        return self
+
+    def __exit__(self, *exc):
+        self.entered -= 1
+        return False
+
+    def read(self):
+        if not self.keys:
+            raise EOFError
+        return self.keys.pop(0)
+
+
+@unittest.skipUnless(uimod.rich_available(), 'rich is not installed')
+class RichKeyTests(unittest.TestCase):
+    OPTS = [Option('wol.example.com', 'tunnel', True, True), Option('raspberrypi.local', 'mdns', True),
+            Option('192.168.1.10', 'lan ip', False), Option('home.example.com', 'ddns', False)]
+
+    def make(self, keys, answers=(), height=40):
+        from rich.console import Console
+        out = io.StringIO()
+        self.keys = ScriptedKeys(keys)
+        ui = uimod.RichUI(Console(file=out, force_terminal=False, width=100, height=height, highlight=False), keys=self.keys)
+        lines = list(answers)
+        ui.console.input = lambda prompt='', **kw: lines.pop(0)
+        return ui, out
+
+    def test_choose_moves_with_arrows_and_wraps(self):
+        ui, out = self.make(['down', 'down', 'enter'])
+        self.assertEqual(ui.choose('Q', ['one', 'two', 'three'], 1), (3, 'three'))
+        ui, out = self.make(['up', 'enter'])
+        self.assertEqual(ui.choose('Q', ['one', 'two', 'three'], 1), (3, 'three'))
+        self.assertIn('three', out.getvalue())
+        self.assertEqual(self.keys.entered, 0)      # terminal mode restored
+
+    def test_choose_enter_takes_default_and_digit_jumps(self):
+        ui, _ = self.make(['enter'])
+        self.assertEqual(ui.choose('Q', ['one', 'two'], 2), (2, 'two'))
+        ui, _ = self.make(['2', 'enter'])
+        self.assertEqual(ui.choose('Q', ['one', 'two']), (2, 'two'))
+        ui, _ = self.make(['9', None, 'x', 'enter'])  # out of range / unknown keys do nothing
+        self.assertEqual(ui.choose('Q', ['one', 'two']), (1, 'one'))
+
+    def test_choose_many_space_toggles_row_under_cursor(self):
+        ui, out = self.make(['down', 'space', 'down', 'space', 'enter'])
+        self.assertEqual(ui.choose_many('Pick', self.OPTS), ['wol.example.com', '192.168.1.10'])
+        text = out.getvalue()
+        self.assertIn('lan ip', text)
+        self.assertIn('[x]', text)
+
+    def test_choose_many_locked_row_cannot_be_unticked(self):
+        ui, out = self.make(['space', '1', 'enter'])
+        self.assertEqual(ui.choose_many('Pick', self.OPTS), ['wol.example.com', 'raspberrypi.local'])
+
+    def test_choose_many_requires_min_selected(self):
+        opts = [Option('a.example.com', 'a', True), Option('b.example.com', 'b', False)]
+        ui, _ = self.make(['space', 'enter', 'down', 'space', 'enter'])
+        self.assertEqual(ui.choose_many('Pick', opts), ['b.example.com'])
+
+    def test_choose_many_add_validates_and_ticks(self):
+        ui, _ = self.make(['a', 'a', 'enter'], answers=['not valid!', 'NAS.example.com', ''])
+        got = ui.choose_many('Pick', self.OPTS, validator=validate_hostname)
+        self.assertEqual(got, ['wol.example.com', 'raspberrypi.local', 'nas.example.com'])
+
+    def test_end_of_input_aborts(self):
+        ui, _ = self.make(['down'])
+        with self.assertRaises(SystemExit):
+            ui.choose('Q', ['one', 'two'])
+        self.assertEqual(self.keys.entered, 0)
+
+    def test_falls_back_to_numbers_when_list_does_not_fit_or_keys_break(self):
+        ui, _ = self.make(['enter'], answers=['2'], height=5)
+        self.assertEqual(ui.choose('Q', ['one', 'two', 'three']), (2, 'two'))
+        self.assertEqual(self.keys.keys, ['enter'])  # key reader untouched
+
+        class Broken(ScriptedKeys):
+            def read(self):
+                raise OSError('not a terminal')
+        ui, out = self.make([], answers=['2', '3', ''])
+        ui._keys = Broken([])
+        self.assertEqual(ui.choose('Q', ['one', 'two']), (2, 'two'))
+        self.assertIsNone(ui._keys)
+        self.assertEqual(ui.choose_many('Pick', self.OPTS), ['wol.example.com', 'raspberrypi.local', '192.168.1.10'])
+        self.assertIn('numbered choices', out.getvalue())
+
+    def test_no_key_reader_without_a_terminal(self):
+        from rich.console import Console
+        ui = uimod.RichUI(Console(file=io.StringIO(), force_terminal=False))
+        self.assertIsNone(ui._keys)
+
+
+class TtyKeysTests(unittest.TestCase):
+    def read_all(self, data):
+        try:
+            import pty
+        except ImportError:
+            self.skipTest('no pty on this platform')
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master)
+        self.addCleanup(os.close, slave)
+
+        class Stream(object):
+            def fileno(self):
+                return slave
+        got = []
+        with uimod.TtyKeys(Stream()) as keys:
+            os.write(master, data)
+            import time
+            time.sleep(0.2)
+            for _ in range(20):
+                try:
+                    k = keys.read()
+                except EOFError:
+                    break
+                got.append(k)
+                if k == 'enter':
+                    break
+        return got
+
+    def test_decodes_arrows_space_letters_and_enter(self):
+        self.assertEqual(self.read_all(b'\x1b[A\x1b[B\x1bOA\x1bOB a2X\x1b[C\x1b[3~\r'),
+                         ['up', 'down', 'up', 'down', 'space', 'a', '2', 'x', None, None, 'enter'])
 
 
 if __name__ == '__main__':
