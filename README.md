@@ -17,8 +17,10 @@ The setup script asks how you want to reach RWSOLS from outside your home networ
 
 - **None (LAN only).** The default for new installs. RWSOLS is only reachable from inside your network.
 - **Port forwarding.** The original method: dynamic DNS, router port forwards for 80/443, and an optional Let's Encrypt certificate. This is the default for installs that already exist. See the [installation instructions](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Installation-(v3)).
-- **Cloudflare Tunnel.** No inbound ports. A small service (`cloudflared`) on the Pi makes an outbound connection to Cloudflare, which serves your domain. Needs a domain on Cloudflare. See [Remote Access with Cloudflare Tunnel](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Remote-Access-with-Cloudflare-Tunnel).
+- **Cloudflare Tunnel.** No inbound ports. A small service (`cloudflared`) on the Pi makes an outbound connection to Cloudflare, which serves your domain. Needs a domain whose DNS is managed by Cloudflare (nameservers pointing at Cloudflare; the free plan is enough). How the domain's IP is kept up to date (ddclient on the Pi, your router, another service, or not at all) does not matter. See [Remote Access with Cloudflare Tunnel](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Remote-Access-with-Cloudflare-Tunnel).
 - **Cloudflare Access (optional, Tunnel mode only).** A login in front of RWSOLS at Cloudflare's edge, which RWSOLS also verifies. See [Adding Cloudflare Access](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Adding-Cloudflare-Access-(optional)).
+
+Before the mode question, the script checks whether Cloudflare is an option: it looks up who hosts the DNS for your dynamic DNS names (or for a domain you enter) and only offers Cloudflare Tunnel and Access when that is Cloudflare. If it is not, it says that it is skipping those options and why. A failed lookup never hides them.
 
 Separately from the mode, you can turn on a hostname allowlist, so that Apache and PHP answer only to the host names you list (protection against DNS rebinding). See [Security](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Security).
 
@@ -49,18 +51,25 @@ Every setting is described in the [Configuration Reference](https://github.com/s
 | `$TUNNEL_ORIGIN_PORT` | `8080` | Port of that listener (used by the setup script). |
 | `$ACCESS_TEAM_DOMAIN` | `NULL` | Cloudflare Access team domain, e.g. `example.cloudflareaccess.com`. |
 | `$ACCESS_AUD` | `NULL` | Application Audience (AUD) tag of the Access application. |
+| `$LOGIN_MAX_ATTEMPTS` | `5` | Wrong passphrases allowed from one client address before it is locked out. `0` turns the limit off. |
+| `$LOGIN_LOCKOUT_SECONDS` | `900` | Length of the lockout, and the period over which wrong passphrases are counted. |
 
 After editing these by hand, run `python3 setup.py --remote-access` so the copy in `/var/www/html` and the generated Apache configuration are updated.
 
 
 Upgrading
 ---------
-Nothing changes unless you opt in. A `config.php` without the new settings behaves exactly as before. If you re-run `python3 setup.py` on an existing install, the only visible differences are one new question about the remote access mode (the default is port forwarding, which is the previous behavior), an optional question about the hostname allowlist (the default is off), and a one-time question about automatic security updates (the default is yes; answer no to leave the system as it is).
+Remote access works as before unless you opt in: a `config.php` without the new settings keeps its mode, and no allowlist, tunnel or Access is enabled. Two security changes do apply to every install after an upgrade:
+
+- **Login throttling.** Five wrong passphrases from one address lock that address out for 15 minutes, even with the right passphrase. Add `$LOGIN_MAX_ATTEMPTS = 0;` to `config.php` for the old behavior.
+- **Stricter file permissions.** The setup script makes `/var/www/html/config.php` readable only by root and the web server (`root:www-data`, mode 640), and the `/var/www/html_backup_*` folders readable only by root. Use `sudo` to read them.
+
+Otherwise, if you re-run `python3 setup.py` on an existing install, the only visible differences are one new question about the remote access mode (the default is port forwarding, which is the previous behavior), an optional question about the hostname allowlist (the default is off), and a one-time question about automatic security updates (the default is yes; answer no to leave the system as it is).
 
 
 Moving from port forwarding to Cloudflare Tunnel
 ------------------------------------------------
-1. Put your domain on Cloudflare (nameservers pointed at Cloudflare) if it is not already there.
+1. Put your domain's DNS on Cloudflare if it is not already there: add the site in the Cloudflare dashboard and set the nameservers it shows you at your registrar. The setup script checks this and does not offer the Tunnel option until it is done.
 2. Pull the latest code and run `python3 setup.py --remote-access`. Choose "Cloudflare Tunnel" and follow the prompts. Pick a hostname that is not already in use, or be ready to let the script show you the conflicting DNS record (`--force` replaces it).
 3. If the new hostname is also in your `ddclient` host list (`/etc/ddclient.conf`), remove it there. The tunnel owns that DNS record, and ddclient would keep overwriting it with your IP. The script warns you if it finds an overlap. DDNS itself is not touched.
 4. Check that the new hostname works, then remove the port forwards for 80 and 443 from your router.
