@@ -22,6 +22,8 @@ The setup script asks how you want to reach RWSOLS from outside your home networ
 
 Before the mode question, the script checks whether Cloudflare is an option: it looks up who hosts the DNS for your dynamic DNS names (or for a domain you enter) and only offers Cloudflare Tunnel and Access when that is Cloudflare. If it is not, it says that it is skipping those options and why. A failed lookup never hides them.
 
+For the automatic Tunnel setup the script needs a Cloudflare API token. If ddclient on the Pi already uses a Cloudflare API token for dynamic DNS, the script offers to use that one, checks that it has the permissions needed (Tunnel, and Access if you enable it), and falls back to asking for a token if it does not.
+
 Separately from the mode, you can turn on a hostname allowlist, so that Apache and PHP answer only to the host names you list (protection against DNS rebinding). See [Security](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Security).
 
 The setup script also offers to turn on automatic security updates for the operating system (Debian's `unattended-upgrades`, extended to the Raspberry Pi package archive), with an optional automatic restart at 04:00 when an update needs one. It asks once, and you can say no.
