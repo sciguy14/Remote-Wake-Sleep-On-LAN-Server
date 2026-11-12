@@ -40,6 +40,11 @@ def parse_identities(emails_text, domain_text):
 
 
 def ask_identities(ui):
+    ui.explain('Who may log in', [
+        'Cloudflare Access emails a one-time code to the address a visitor types in; only people you list below get in.',
+        'Emails: individual addresses that may log in (comma separated).',
+        'Email domain: everyone with an address at that domain may log in (e.g. example.com). Use it for family or a team.',
+        'Fill in either one, or both. At least one is required.'])
     while True:
         try:
             return parse_identities(ui.ask('Emails allowed to log in (comma separated, may be blank)', ''),
@@ -49,16 +54,13 @@ def ask_identities(ui):
 
 
 def ask_manual(ui):
-    ui.say('In the Cloudflare Zero Trust dashboard (Access > Applications), add a Self-hosted application for your tunnel')
-    ui.say('hostname with an Allow policy, then copy the "Application Audience (AUD) Tag" from its overview.')
-    ui.say('The team domain is shown under Settings > Custom Pages / General (example.cloudflareaccess.com).')
-    while True:
-        try:
-            team = validate_team_domain(ui.ask('Team domain'))
-            aud = validate_aud(ui.ask('Application AUD tag'))
-            return team, aud
-        except ValueError as e:
-            ui.warn(str(e))
+    ui.explain('Cloudflare Access values', [
+        'In the Cloudflare Zero Trust dashboard (Access > Applications), add a Self-hosted application for your tunnel',
+        'hostname with an Allow policy, then copy the "Application Audience (AUD) Tag" from its overview.',
+        'The team domain is shown under Settings > Custom Pages / General (example.cloudflareaccess.com).'])
+    team = ui.ask('Team domain', validator=validate_team_domain)
+    aud = ui.ask('Application AUD tag', validator=validate_aud)
+    return team, aud
 
 
 class AccessProvisioner(object):
@@ -162,11 +164,12 @@ class AccessProvisioner(object):
 
 
 def show_service_token_once(ui, tok):
-    ui.say('')
-    ui.say('SERVICE TOKEN (shown once; it is not stored anywhere by this wizard):')
-    ui.say('    CF-Access-Client-Id:     %s' % tok['client_id'])
-    ui.say('    CF-Access-Client-Secret: %s' % tok['client_secret'])
-    ui.say('The secret cannot be displayed again. Send both as request headers from non-browser clients. It expires after 1 year.')
+    ui.explain('Service token (shown once)', [
+        'It is not stored anywhere by this wizard.',
+        '    CF-Access-Client-Id:     %s' % tok['client_id'],
+        '    CF-Access-Client-Secret: %s' % tok['client_secret'],
+        'The secret cannot be displayed again. Send both as request headers from non-browser clients. It expires after 1 year.'],
+        style='warn')
 
 
 def remove_app(ctx, st, api):

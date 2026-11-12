@@ -15,7 +15,6 @@ import sys
 import urllib.request
 import urllib.error
 import re
-import getpass
 import socket
 import time
 import ssl
@@ -23,10 +22,14 @@ import fileinput
 import filecmp
 import datetime
 import argparse
+from rwsols_setup import ui as ui_mod
 
 # Exit Handler
 def signal_handler(sig, frame):
-    print('\n\nABORTING SCRIPT.\n')
+    if ui is not None:
+        ui.error('\n\nABORTING SCRIPT.\n')
+    else:
+        sys.stderr.write('\n\nABORTING SCRIPT.\n\n')
     sys.exit(1)
 signal.signal(signal.SIGINT, signal_handler)
 
@@ -41,15 +44,8 @@ rwsols_config_sample = script_dir.joinpath('www/html/config_sample.php')
 rwsols_config_user = script_dir.joinpath('www/html/config.php')
 remote_mode = "port_forward" # Options: "none","port_forward","tunnel" (how RWSOLS is reached from outside the LAN)
 
-# Colors
-black = lambda text: '\033[0;30m' + text + '\033[0m'
-red = lambda text: '\033[0;31m' + text + '\033[0m'
-green = lambda text: '\033[0;32m' + text + '\033[0m'
-yellow = lambda text: '\033[0;33m' + text + '\033[0m'
-blue = lambda text: '\033[0;34m' + text + '\033[0m'
-magenta = lambda text: '\033[0;35m' + text + '\033[0m'
-cyan = lambda text: '\033[0;36m' + text + '\033[0m'
-white = lambda text: '\033[0;37m' + text + '\033[0m'
+# The wizard UI (rich when available on a TTY, plain text otherwise). Created in main().
+ui = None
 
 # Command line options
 def parse_args():
@@ -64,13 +60,15 @@ def parse_args():
     return args
 
 def make_context(args):
-    from rwsols_setup.runtime import Context, SystemRunner, UrllibTransport, ConsoleUI
-    return Context(SystemRunner(), UrllibTransport(), ConsoleUI(), str(script_dir), dry_run=args.dry_run, force=args.force)
+    from rwsols_setup.runtime import Context, SystemRunner, UrllibTransport
+    return Context(SystemRunner(), UrllibTransport(), ui, str(script_dir), dry_run=args.dry_run, force=args.force)
 
 # Main Logic
 def main():
-    global urls, remote_mode
+    global urls, remote_mode, ui
     args = parse_args()
+    ui_mod.bootstrap_rich(skip=args.dry_run)
+    ui = ui_mod.select_ui()
     from rwsols_setup import wizard
     from rwsols_setup.errors import SetupError
     ctx = make_context(args)
@@ -82,27 +80,26 @@ def main():
             else:
                 wizard.run_remote_access(ctx, urls, get_local_ip() or None, copy_webroot=_12_copy_webroot)
         except SetupError as e:
-            print(red("\n" + str(e)))
+            ui.error("\n" + str(e))
             sys.exit(1)
         return
 
     # Intro
-    print("")
-    print(cyan(">>>                                                       <<<"))
-    print(cyan(">>> Remote-Wake-Sleep-On-LAN-Server (RWSOLS) Setup Script <<<"))
-    print(cyan(">>>                                                       <<<\n"))
+    ui.say("")
+    ui.heading("Remote-Wake-Sleep-On-LAN-Server (RWSOLS) Setup Script")
 
     # Warn the user that internet scripts are dangerous
-    print(yellow("This script will install the required packages and configure permissions as necessary for RWSOLS to work properly. It assumes you are on the bookworm release."))
-    print(yellow("As with all scripts that you find on the internet, I strongly suggest you read its contents before blindly executing it."))
-    print(yellow("This script assumes your user is a passwordless sudo user, which is the default for the 'pi' user on Raspbian. It executes commands with sudo.\n"))
-    print(yellow("If you want to abort this script to inspect its contents, press Ctrl+C now."))
-    input(yellow("If you have read and understood what this script is doing, Press Enter to continue with the automatic setup."))
-    print("")
+    ui.explain("Before you continue", [
+        "This script will install the required packages and configure permissions as necessary for RWSOLS to work properly. It assumes you are on the bookworm release.",
+        "As with all scripts that you find on the internet, I strongly suggest you read its contents before blindly executing it.",
+        "This script assumes your user is a passwordless sudo user, which is the default for the 'pi' user on Raspbian. It executes commands with sudo.",
+        "If you want to abort this script to inspect its contents, press Ctrl+C now."], style="warn")
+    ui.pause("If you have read and understood what this script is doing, Press Enter to continue with the automatic setup.")
+    ui.say("")
 
     # Add note about skipping completed steps
-    print("Note: One-time steps that have already been executed will be automatically skipped.")
-    print("If you need to re-run them, delete the relevant dot files in this folder.\n")
+    ui.hint("Note: One-time steps that have already been executed will be automatically skipped.")
+    ui.hint("If you need to re-run them, delete the relevant dot files in this folder.\n")
     time.sleep(1)
 
     # Install prerequisites
@@ -141,7 +138,7 @@ def main():
     elif encryption_mode == "none":
         run_step('_08_unencrypted_setup', 'Unencrypted Setup', False)
     else:
-        print("No Apache2 encryption setting changes will be made.\n")
+        ui.say("No Apache2 encryption setting changes will be made.\n")
 
     # Security-Harden PHP installation
     run_step('_09_secure_php', 'Secure the PHP Installation')
@@ -159,7 +156,7 @@ def main():
         wiz.prepare_cloud()
         wiz.write_config()
     except SetupError as e:
-        print(red("\n" + str(e)))
+        ui.error("\n" + str(e))
         sys.exit(1)
 
     # Copy webroot to apache webroot folder for web-serving
@@ -170,10 +167,10 @@ def main():
     try:
         wiz.apply_local()
     except SetupError as e:
-        print(red("\n" + str(e)))
+        ui.error("\n" + str(e))
         sys.exit(1)
 
-    print("Automatic Setup is now complete.")
+    ui.success("Automatic Setup is now complete.")
 
 
 # Function for encapsulating parts of the setup process that can be skipped on script re-run
@@ -183,15 +180,15 @@ def main():
 # Returns True if the setup step should be run, False if it was already previously completed
 def run_step(handle, description, dot_file_skippable=True):
     if script_dir.joinpath("." + handle).exists() and dot_file_skippable:
-        print(blue("'" + description + "' has already been completed. Skipping.\n"))
+        ui.info("'" + description + "' has already been completed. Skipping.\n")
     else:
-        print(cyan("Running: ") + description)
+        ui.info("Running: " + description)
         if eval(handle + '()'):
-            print(green("Done: ") + description + "\n")
+            ui.success("Done: " + description + "\n")
             if dot_file_skippable:
                 script_dir.joinpath("." + handle).touch()
         else:
-            print(red("Script Exiting due to failure in '" + description + "' setup step.\n"))
+            ui.error("Script Exiting due to failure in '" + description + "' setup step.\n")
             sys.exit(1) 
 
 # Setup Step 1: Install Prerequisite Software
@@ -213,7 +210,7 @@ def _01_install_prereqs():
         subprocess.run(['sudo', 'snap', 'install', '--classic', 'certbot'], check=True)
         subprocess.run(['sudo', 'ln', '-sf', '/snap/bin/certbot', '/usr/bin/certbot'], check=True)
     except subprocess.CalledProcessError:
-        print(yellow("Error installing prerequisite software."))
+        ui.warn("Error installing prerequisite software.")
         return False
     return True
 
@@ -222,7 +219,7 @@ def _02_ping_permissions():
     try:
         subprocess.run(['sudo', 'chmod', 'u+s', '/usr/bin/ping'], check=True)
     except subprocess.CalledProcessError:
-        print(yellow("Error setting ping permissions."))
+        ui.warn("Error setting ping permissions.")
         return False
     return True
 
@@ -233,131 +230,131 @@ def _03_copy_webroot():
     apache_html_dir = apache_www_dir.joinpath('html')
     try:
         if directories_match(wol_html_dir, apache_html_dir):
-            print(cyan("Apache webroot contents already match local webroot contents. No update to be made."))
+            ui.info("Apache webroot contents already match local webroot contents. No update to be made.")
         else:
-            print(yellow("The Apache webroot contents do not match local webroot."))
+            ui.warn("The Apache webroot contents do not match local webroot.")
             backup_dir_str = str(apache_www_dir) + "/html_backup_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
             subprocess.run(['sudo', 'mv', str(apache_html_dir), backup_dir_str], check=True)
-            print(yellow("Apache webroot backed up to " + backup_dir_str))
+            ui.warn("Apache webroot backed up to " + backup_dir_str)
             subprocess.run(['sudo', 'cp', '-R', str(wol_html_dir), str(apache_www_dir)], check=True)
-            print(cyan("Website contents copied to Apache webroot."))
+            ui.success("Website contents copied to Apache webroot.")
     except Exception as e:
-        print(yellow("Error moving website contents to Apache webroot folder."))
-        print(yellow(str(e)))
+        ui.warn("Error moving website contents to Apache webroot folder.")
+        ui.warn(str(e))
         return False
     return True
 
 # Setup Step 4: DDNS Configuration
 def _04_setup_ddns():
-    ddns_option, _ = multi_choice('Will you handle Dynamic DNS updates from your router, or would you like to setup Dynamic DNS updating on this Pi?', ['I will handle DDNS on my router or elsewhere.','I want to configure DDNS updates from this Pi.'])
-    print ("")
+    ddns_option, _ = ui.choose('Will you handle Dynamic DNS updates from your router, or would you like to setup Dynamic DNS updating on this Pi?', ['I will handle DDNS on my router or elsewhere.','I want to configure DDNS updates from this Pi.'])
+    ui.say("")
     if ddns_option == 1:
-        print("Ok. If you haven't already, go configure your router or other device to update your DDNS service of choice, now.")
-        input("Once you've done that, press Enter to proceed, and the URL/IP will be checked.")
+        ui.say("Ok. If you haven't already, go configure your router or other device to update your DDNS service of choice, now.")
+        ui.pause("Once you've done that, press Enter to proceed, and the URL/IP will be checked.")
         return True
     elif ddns_option == 2:
         # Setup ddclient so that our URL points to our public IP. If we don't do this, certbot won't be able to complete the port 80 challenge.
 
         # Note, we assume user is on at least bookworm release, as that has version 3.10 of ddclient
-        input("ddclient will be installed via apt package manager. Snap version will be removed if present. Press enter to proceed.")
-        print("")
-        print("Installing ddclient and required packages...")
+        ui.pause("ddclient will be installed via apt package manager. Snap version will be removed if present. Press enter to proceed.")
+        ui.say("")
+        ui.say("Installing ddclient and required packages...")
         try:
             subprocess.run(['sudo', 'snap', 'remove', '--purge', 'ddclient-snap']) # Remove any existing installations from snap
             subprocess.run(['sudo', 'DEBIAN_FRONTEND=noninteractive', 'apt', 'install', '-yqq', 'libio-socket-ssl-perl', 'ddclient'], check=True)
         except subprocess.CalledProcessError as e:
-            print(yellow("Error installing ddclient and/or libio-socket-ssl-perl."))
-            print(yellow(str(e)))
+            ui.warn("Error installing ddclient and/or libio-socket-ssl-perl.")
+            ui.warn(str(e))
             return False
 
 
-        print("\nNow we need to setup ddclient on this device.")
-        ddclient_config_option, _ = multi_choice("Would you like to use this script's wizard to help you generate your ddclient config file, or would you like to provide your own config file?", ['Please help me generate the config file.','I will manually create the ddclient config file (advanced!).'])
+        ui.say("\nNow we need to setup ddclient on this device.")
+        ddclient_config_option, _ = ui.choose("Would you like to use this script's wizard to help you generate your ddclient config file, or would you like to provide your own config file?", ['Please help me generate the config file.','I will manually create the ddclient config file (advanced!).'])
         if ddclient_config_option == 1:
-            print("\nGreat! Answer the following questions to generate your config file. You'll have a chance to review it and re-answer if you make a mistake.")
+            ui.say("\nGreat! Answer the following questions to generate your config file. You'll have a chance to review it and re-answer if you make a mistake.")
             # Now, get the info necessary to create the ddclient.conf file
             while True:
                 with open(ddns_temp_config, 'w') as f:
                     f.write('# Generated by RWSOLS Setup Script: https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server\n')
                     f.write('usev4=webv4,webv4=ipify-ipv4\n') # We are running this behind a router, so we must use the web method to get the IP. The default google domains lookup is gone, so we use ipify instead for ipv4.
                     f.write('ssl=yes\n') # Don't send our password in cleartext!
-                    i, v = multi_choice('Choose a DDNS Protocol.', ['dyndns2','noip','cloudflare','namecheap','zoneedit1','easydns','nfsn','yandex','ovh','dinahosting'])
+                    i, v = ui.choose('Choose a DDNS Protocol.', ['dyndns2','noip','cloudflare','namecheap','zoneedit1','easydns','nfsn','yandex','ovh','dinahosting'])
                     f.write('protocol=' + v + '\n')
                     url_prediction = ''
                     # Cloudflare needs some special configuration.
                     if v == 'cloudflare':
-                        input("\nIn order to configure DDNS for a domain whose DNS records are managed by cloudflare, you must first ensure that your selected domain's DNS configuration is setup to have its A-record NOT proxied through cloudflare (must have the grey cloud icon in the web dashboard instead of the orange proxy cloud). Press enter once you have confirmed this.")
+                        ui.pause("\nIn order to configure DDNS for a domain whose DNS records are managed by cloudflare, you must first ensure that your selected domain's DNS configuration is setup to have its A-record NOT proxied through cloudflare (must have the grey cloud icon in the web dashboard instead of the orange proxy cloud). Press enter once you have confirmed this.")
                         while True:
-                            v = input('\nEnter your cloudflare DNS zone name to be controlled (ex: myhome.com): ')
+                            v = ui.ask('\nEnter your cloudflare DNS zone name to be controlled (ex: myhome.com)')
                             if is_valid_hostname(v):
                                 f.write('zone=' + v + '\n')
                                 url_prediction = v
                                 break
                             else:
-                                print ("'" + v + "' is not a tld zone name. Please try again.")
+                                ui.say("'" + v + "' is not a tld zone name. Please try again.")
                         f.write('login=token\n') # Cloudflare requires the use of an API token, so no username is entered.
-                        print("\nFollow the instructions at this link to create an API token for your cloudflare account. It must have the permissions shown in the screenshot.")
-                        print("https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Notes-and-FAQs#cloudflare-ddns")
-                        v = getpass.getpass('\nEnter the generated cloudflare API token: ')
+                        ui.say("\nFollow the instructions at this link to create an API token for your cloudflare account. It must have the permissions shown in the screenshot.")
+                        ui.say("https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Notes-and-FAQs#cloudflare-ddns")
+                        v = ui.ask_secret('\nEnter the generated cloudflare API token', strip=False)
                         f.write('password=' + v + '\n')
                     else:
                         while True:
-                            v = input('Enter your Server URL (ex: members.dyndns.org). Leave blank if not needed by your service/protocol: ')
+                            v = ui.ask('Enter your Server URL (ex: members.dyndns.org). Leave blank if not needed by your service/protocol')
                             if v == "":
                                 break # No Server value provided
                             elif is_valid_hostname(v):
                                 f.write('server=' + v + '\n')
                                 break
                             else:
-                                print ("'" + v + "' is not a valid server. Please try again.")
-                        v = input('Enter your login username for the service: ')
+                                ui.say("'" + v + "' is not a valid server. Please try again.")
+                        v = ui.ask('Enter your login username for the service')
                         f.write('login=' + v + '\n')
-                        v = getpass.getpass('Enter your login password for the service: ')
+                        v = ui.ask_secret('Enter your login password for the service', strip=False)
                         f.write('password=' + v + '\n')
                     global urls
                     urls = []
                     if url_prediction != '':
-                        url_fill_option, _ = multi_choice('You set ' + url_prediction + ' as your zone. Would you like to use it as your single URL, or do you want to specify different or multiple hostnames?',['Set ' + url_prediction + ' as my single URL to point at my IP.', 'I want to set a different, or multiple URLS (i.e. subdomains) in this zone to point at my IP'])
+                        url_fill_option, _ = ui.choose('You set ' + url_prediction + ' as your zone. Would you like to use it as your single URL, or do you want to specify different or multiple hostnames?',['Set ' + url_prediction + ' as my single URL to point at my IP.', 'I want to set a different, or multiple URLS (i.e. subdomains) in this zone to point at my IP'])
                         if url_fill_option == 1:
                             urls = [url_prediction]
                     if len(urls) == 0:
                         if url_prediction == '':
-                            urls = enter_urls('Enter all your Hostname(s) to update (ex: myhome.com) (multi ex: sub1.myhome.com, myhome.com).: ')
+                            urls = enter_urls('Enter all your Hostname(s) to update (ex: myhome.com) (multi ex: sub1.myhome.com, myhome.com).')
                         else:
-                            urls = enter_urls('Enter all your Hostname(s) to update (ex: ' + url_prediction + ') (multi ex: sub1.' + url_prediction + ', ' + url_prediction + ').: ')
+                            urls = enter_urls('Enter all your Hostname(s) to update (ex: ' + url_prediction + ') (multi ex: sub1.' + url_prediction + ', ' + url_prediction + ').')
                     f.write(",".join(urls) + '\n')
-                print("\nYour config file contents will be written as follows:")
+                ui.say("\nYour config file contents will be written as follows:")
                 with open(ddns_temp_config, 'r') as f:
                     for line in f:
-                            print("\t" + line.strip())
-                    config_okay, _ = multi_choice('Does this look okay?',['Yes Please write this configuration file', 'No. I want to do the wizard again.'])
+                            ui.say("\t" + line.strip())
+                    config_okay, _ = ui.choose('Does this look okay?',['Yes Please write this configuration file', 'No. I want to do the wizard again.'])
                     if config_okay == 1:
                         break
                     else:
-                        print("\nOkay. The wizard will run again.\n")
+                        ui.say("\nOkay. The wizard will run again.\n")
             try:
                 subprocess.run(['sudo', 'cp', str(ddns_temp_config), str(ddns_real_config)], check=True)
             except subprocess.CalledProcessError:
-                print(yellow("Error copying config file."))
+                ui.warn("Error copying config file.")
                 return False
         elif ddclient_config_option == 2:
-            print("Okay. It recommend that you set use=web and ssl=yes. When you're done editing, save and exit nano to proceed.")
-            input("Press enter to open the config file with nano.")
+            ui.say("Okay. It recommend that you set use=web and ssl=yes. When you're done editing, save and exit nano to proceed.")
+            ui.pause("Press enter to open the config file with nano.")
             try:
                 subprocess.run(['sudo', 'nano', str(ddns_real_config)], check=True)
             except subprocess.CalledProcessError:
-                print(yellow("Error editing config file."))
+                ui.warn("Error editing config file.")
                 return False
-            print("The config file has been written.\n")
+            ui.say("The config file has been written.\n")
 
-        print("Launching ddclient daemon...")
+        ui.say("Launching ddclient daemon...")
         try:
             subprocess.run(['sudo', 'systemctl', 'restart', 'ddclient'], check=True)
         except subprocess.CalledProcessError:
-            print(yellow("Error launching ddclient daemon."))
+            ui.warn("Error launching ddclient daemon.")
             return False
 
-        print("Waiting 5 seconds for DNS update to execute before proceeding...")
+        ui.say("Waiting 5 seconds for DNS update to execute before proceeding...")
         time.sleep(5)    
         return True
 
@@ -368,13 +365,13 @@ def _05_get_ip():
         public_ipv4 = urllib.request.urlopen('https://v4.ident.me').read().decode('utf8')
     except urllib.error.URLError as e:
         if hasattr(e, 'reason'):
-            print(yellow('Failed to reach the ident.me server.'))
-            print(yellow('Reason: ' + str(e.reason)))
+            ui.warn('Failed to reach the ident.me server.')
+            ui.warn('Reason: ' + str(e.reason))
         elif hasattr(e, 'code'):
-            print(yellow('The ident.me server could not fulfill the request.'))
-            print(yellow('Error code: ' + str(e.code)))
+            ui.warn('The ident.me server could not fulfill the request.')
+            ui.warn('Error code: ' + str(e.code))
         return False
-    print("The public-facing IPv4 address of this Pi's network was detected as " + cyan(public_ipv4) + ".")
+    ui.info("The public-facing IPv4 address of this Pi's network was detected as " + public_ipv4 + ".")
     return True
 
 # Setup Step 6: Confirm that the DNS update succeeded
@@ -389,25 +386,25 @@ def _06_check_urls():
         try:
             resolved_ip = socket.gethostbyname(url)
         except socket.gaierror:
-            print(yellow("Failed to resolve " + url + "! Is it a valid URL?"))
+            ui.warn("Failed to resolve " + url + "! Is it a valid URL?")
             failures = True
         else:
             for attempt in range(1, max_attempts+1):
                 if resolved_ip != public_ipv4:
                     if attempt < max_attempts:
-                        print("[Attempt " + str(attempt) + "/" + str(max_attempts) + "] " + yellow(url + " resolves to " + resolved_ip + " instead of detected public IP of " + public_ipv4 + "! ") + "Checking again in " + str(attempt**backoff_exponent) + " seconds.")
+                        ui.warn("[Attempt " + str(attempt) + "/" + str(max_attempts) + "] " + url + " resolves to " + resolved_ip + " instead of detected public IP of " + public_ipv4 + "! Checking again in " + str(attempt**backoff_exponent) + " seconds.")
                         time.sleep(attempt**backoff_exponent)
                     else:
-                        print("[Attempt " + str(attempt) + "/" + str(max_attempts) + "] " + yellow(url + " resolves to " + resolved_ip + " instead of detected public IP of " + public_ipv4 + "! DDNS configured incorrectly, or it hasn't updated yet."))
+                        ui.warn("[Attempt " + str(attempt) + "/" + str(max_attempts) + "] " + url + " resolves to " + resolved_ip + " instead of detected public IP of " + public_ipv4 + "! DDNS configured incorrectly, or it hasn't updated yet.")
                         failures = True
                 else:
-                    print("[Attempt " + str(attempt) + "/" + str(max_attempts) + "] " + cyan(url) + " correctly resolves to " + cyan(public_ipv4) + "!")
+                    ui.success("[Attempt " + str(attempt) + "/" + str(max_attempts) + "] " + url + " correctly resolves to " + public_ipv4 + "!")
                     break
             else:
-                print(yellow(url + " resolves to " + resolved_ip + " instead of detected public IP of " + public_ipv4 + "! "))
+                ui.warn(url + " resolves to " + resolved_ip + " instead of detected public IP of " + public_ipv4 + "! ")
     if failures:
-        print(yellow("One or more of your URLs failed to resolve! Try running this script again after checking your domains and your DDNS configuration."))
-        print(yellow("Delete the setup_ddns dot file in this directory if you need to reconfigure local DDNS updating."))
+        ui.warn("One or more of your URLs failed to resolve! Try running this script again after checking your domains and your DDNS configuration.")
+        ui.warn("Delete the setup_ddns dot file in this directory if you need to reconfigure local DDNS updating.")
         return False
     return True
 
@@ -424,12 +421,12 @@ def _07_server_check():
     exit_and_fix_option_text = 'Please exit the script - I will forward port 80 and run the script again once I have done that.'
     
     http_server, http_rwsols, https_server, https_rwsols, https_signed = rwsols_serving_status()
-    print("")
+    ui.say("")
 
     # RWSOLS is already running with a signed cert
     if https_rwsols and https_signed:
-        print("Your RWSOLS is already accessible over an encrypted connection with a valid signed certificate.")
-        c, _ = multi_choice('How would you like to proceed?', [retain_encryption_settings_option_text, switch_to_unsigned_option_text, disable_encryption_option_text])
+        ui.say("Your RWSOLS is already accessible over an encrypted connection with a valid signed certificate.")
+        c, _ = ui.choose('How would you like to proceed?', [retain_encryption_settings_option_text, switch_to_unsigned_option_text, disable_encryption_option_text])
         if c == 1:
             encryption_mode="skip"
         elif c == 2:
@@ -440,9 +437,9 @@ def _07_server_check():
 
     # RWSOLS is already running with a self-signed cert, and port 80 is accessible
     elif http_rwsols and https_rwsols and not https_signed:
-        print("Your RWSOLS is already accessible over an encrypted connection, but it is using a self-signed certificate.")
-        print("Port 80 is also correctly resolving to RWSOLS, so automatic certbot configuration should be possible, and is recommended.")
-        c, _ = multi_choice('How would you like to proceed?', [switch_to_signed_option_text, retain_encryption_settings_option_text, disable_encryption_option_text])
+        ui.say("Your RWSOLS is already accessible over an encrypted connection, but it is using a self-signed certificate.")
+        ui.say("Port 80 is also correctly resolving to RWSOLS, so automatic certbot configuration should be possible, and is recommended.")
+        c, _ = ui.choose('How would you like to proceed?', [switch_to_signed_option_text, retain_encryption_settings_option_text, disable_encryption_option_text])
         if c == 1:
             encryption_mode="certbot"
         elif c == 2:
@@ -453,13 +450,13 @@ def _07_server_check():
 
     # RWSOLS is already running with a self-signed cert and port 80 is not accessible
     elif not http_rwsols and https_rwsols and not https_signed:
-        print("Your RWSOLS is already accessible over an encrypted connection, but it is using a self-signed certificate.")
-        print("Port 80 does not appear to be open and pointed to RWSOLS, so automatic certbot configuration is not possible.")
-        c, _ = multi_choice('How would you like to proceed?', [exit_and_fix_option_text, retain_encryption_settings_option_text, disable_encryption_option_text])
+        ui.say("Your RWSOLS is already accessible over an encrypted connection, but it is using a self-signed certificate.")
+        ui.say("Port 80 does not appear to be open and pointed to RWSOLS, so automatic certbot configuration is not possible.")
+        c, _ = ui.choose('How would you like to proceed?', [exit_and_fix_option_text, retain_encryption_settings_option_text, disable_encryption_option_text])
         if c == 1:
             local_ip = get_local_ip()
             if local_ip:
-                print("\nOk! Forward ports 80 and 443 to this Pi (your Pi's local IP that you should forward to is " + magenta(local_ip) + ").")
+                ui.info("\nOk! Forward ports 80 and 443 to this Pi (your Pi's local IP that you should forward to is " + local_ip + ").")
             return False
         elif c == 2:
             encryption_mode="skip"
@@ -469,9 +466,9 @@ def _07_server_check():
 
     # RWSOLS is running on port 80, but doesn't have encryption setup
     elif http_rwsols:
-        print("It looks like RWSOLS is active on port 80, but HTTPS is not configured.")
-        print("Certbot should be able to automatically issue and configure a signed, auto-renewing encryption certificate.")
-        c, _ = multi_choice('How would you like to proceed?', [certbot_encryption_option_text, self_signed_encryption_option_text, no_encryption_option_text])
+        ui.say("It looks like RWSOLS is active on port 80, but HTTPS is not configured.")
+        ui.say("Certbot should be able to automatically issue and configure a signed, auto-renewing encryption certificate.")
+        c, _ = ui.choose('How would you like to proceed?', [certbot_encryption_option_text, self_signed_encryption_option_text, no_encryption_option_text])
         if c == 1:
             encryption_mode="certbot"
         elif c == 2:
@@ -482,13 +479,13 @@ def _07_server_check():
 
     # RWSOLS is not currently accessible
     else:
-        print("In order to automatically configure SSL Encryption, port 80 must be open on your router and forwarded to port 80 on this Pi.")
-        print("If you are unable to forward port 80 because you are using it for another service, or because your ISP blocks it, you can manually configure certbot to perform a DNS challenge instead, or this script can setup unsigned encryption.")
-        c, _ = multi_choice('How would you like to proceed?', [exit_and_fix_option_text , self_signed_encryption_option_text, no_encryption_option_text])
+        ui.say("In order to automatically configure SSL Encryption, port 80 must be open on your router and forwarded to port 80 on this Pi.")
+        ui.say("If you are unable to forward port 80 because you are using it for another service, or because your ISP blocks it, you can manually configure certbot to perform a DNS challenge instead, or this script can setup unsigned encryption.")
+        c, _ = ui.choose('How would you like to proceed?', [exit_and_fix_option_text , self_signed_encryption_option_text, no_encryption_option_text])
         if c == 1:
             local_ip = get_local_ip()
             if local_ip:
-                print("\nOk! Forward ports 80 and 443 to this Pi (your Pi's local IP that you should forward to is " + magenta(local_ip) + ").")
+                ui.info("\nOk! Forward ports 80 and 443 to this Pi (your Pi's local IP that you should forward to is " + local_ip + ").")
             return False
         elif c == 2:
             encryption_mode="self"
@@ -501,25 +498,30 @@ def _07_server_check():
 def _07_lan_encryption_check():
     global urls, encryption_mode
     default_name = socket.gethostname().split('.')[0] + '.local'
-    while True:
-        v = input('Name used to reach this Pi on your LAN (also the self-signed certificate name) [' + default_name + ']: ').strip() or default_name
-        if is_valid_hostname(v):
-            urls = [v]
-            break
-        print(yellow("'" + v + "' is an invalid hostname."))
-    c, _ = multi_choice('How should RWSOLS be served on your local network?', ['Keep the existing encryption settings.', 'Use a self-signed certificate (HTTPS; browsers will warn).', 'No encryption (plain HTTP on the LAN).'])
+    ui.explain("LAN name and encryption", [
+        "The LAN name is how you reach this Pi from your home network (this Pi's mDNS name by default). It is also used as the name on the self-signed certificate, if you choose one.",
+        "Self-signed HTTPS encrypts traffic on your LAN, but browsers will show a warning because no authority vouches for the certificate. Plain HTTP has no warning but no encryption.",
+        "Keeping the existing settings changes nothing about how Apache is currently set up."])
+
+    def valid_name(v):
+        if not is_valid_hostname(v):
+            raise ValueError("'" + v + "' is an invalid hostname.")
+        return v
+
+    urls = [ui.ask('Name used to reach this Pi on your LAN (also the self-signed certificate name)', default_name, validator=valid_name)]
+    c, _ = ui.choose('How should RWSOLS be served on your local network?', ['Keep the existing encryption settings.', 'Use a self-signed certificate (HTTPS; browsers will warn).', 'No encryption (plain HTTP on the LAN).'])
     encryption_mode = ["skip", "self", "none"][c-1]
     return True
 
 # Setup Step 8: Certbot config
 def _08_certbot_setup():
     # Let's Encrypt!
-    print("A valid email address is required so that the Let's Encrypt Certificate Authority can email you if there is problem with the automatic renewal of your certificate.")
-    print("This email will NOT be signed up for a mailing list.")
+    ui.say("A valid email address is required so that the Let's Encrypt Certificate Authority can email you if there is problem with the automatic renewal of your certificate.")
+    ui.say("This email will NOT be signed up for a mailing list.")
     while True:
-        email = input("Please provide a valid email: ")
+        email = ui.ask("Please provide a valid email")
         if not re.fullmatch(r"[^@]+@[^@]+\.[^@]+", email):
-            print(yellow("That doesn't look like a valid email..."))
+            ui.warn("That doesn't look like a valid email...")
         else:
             break
     fill_urls_var()
@@ -529,8 +531,8 @@ def _08_certbot_setup():
         bak = copy_config_with_backup(script_dir.joinpath('apache2_configs/000-default_http.conf'), '/etc/apache2/sites-available/000-default.conf')
         subprocess.run(['sudo', 'service', 'apache2', 'restart'], check=True)
     except subprocess.CalledProcessError as e:
-        print(yellow("Error getting Apache2 site config into default state before running certbot."))
-        print(yellow(str(e)))
+        ui.warn("Error getting Apache2 site config into default state before running certbot.")
+        ui.warn(str(e))
         return False
 
     # Run certbot non-interactively.
@@ -538,8 +540,8 @@ def _08_certbot_setup():
     try:
         subprocess.run(['sudo', 'certbot', '--apache', '--non-interactive', '--agree-tos', '--redirect', '--uir', '--hsts', '-d', ','.join(urls), '--email', email], check=True)
     except subprocess.CalledProcessError as e:
-        print(yellow("Error running certbot."))
-        print(yellow(str(e)))
+        ui.warn("Error running certbot.")
+        ui.warn(str(e))
 
         # Restore the config file that we replaced in the event of a failure running certbot
         copy_config_with_backup(bak, '/etc/apache2/sites-available/000-default.conf')
@@ -566,8 +568,8 @@ def _08_selfcert_setup():
         copy_config_with_backup(script_dir.joinpath('apache2_configs/000-default_self-https.conf'), '/etc/apache2/sites-available/000-default.conf')
         subprocess.run(['sudo', 'service', 'apache2', 'restart'], check=True)
     except subprocess.CalledProcessError as e:
-        print(yellow("Error creating self-signed key and/or enabling SSL engine."))
-        print(yellow(str(e)))
+        ui.warn("Error creating self-signed key and/or enabling SSL engine.")
+        ui.warn(str(e))
         return False
     return True
 
@@ -587,8 +589,8 @@ def _08_unencrypted_setup():
         copy_config_with_backup(script_dir.joinpath('apache2_configs/000-default_http.conf'), '/etc/apache2/sites-available/000-default.conf')
         subprocess.run(['sudo', 'service', 'apache2', 'restart'], check=True)
     except subprocess.CalledProcessError as e:
-        print(yellow("Error configuring Apache2."))
-        print(yellow(str(e)))
+        ui.warn("Error configuring Apache2.")
+        ui.warn(str(e))
         return False
     return True
                 
@@ -604,49 +606,49 @@ def _09_secure_php():
                 php_ini_apache2_location = location
                 break
         if php_ini_apache2_location is None:
-            print(yellow("Apache2 php.ini could not be located."))
+            ui.warn("Apache2 php.ini could not be located.")
             return False
         subprocess.run(['sudo', 'sed', '-i.%s.bak' % str(int(time.time())), 's/expose_php = On/expose_php = Off/g', php_ini_apache2_location], check=True)  # Note that in PHP7, this should be already disabled, but this ensures that it is.
         subprocess.run(['sudo', 'sed', '-i.%s.bak' % str(int(time.time())), 's/E_ALL & ~E_NOTICE & ~E_STRICT & ~E_DEPRECATED/error_reporting = E_ERROR/g', php_ini_apache2_location], check=True)
     except subprocess.CalledProcessError as e:
-        print(yellow("Error updating apache2 php.ini."))
-        print(yellow(str(e)))
+        ui.warn("Error updating apache2 php.ini.")
+        ui.warn(str(e))
         return False
     try:
         security_conf_location = '/etc/apache2/conf-available/security.conf'
         subprocess.run(['sudo', 'sed', '-i.%s.bak' % str(int(time.time())), 's/ServerSignature On/ServerSignature Off/g', security_conf_location], check=True)
         subprocess.run(['sudo', 'sed', '-i.%s.bak' % str(int(time.time())), 's/ServerTokens OS/ServerTokens Prod/g', security_conf_location], check=True)
     except subprocess.CalledProcessError as e:
-        print(yellow("Error updating security.conf."))
-        print(yellow(str(e)))
+        ui.warn("Error updating security.conf.")
+        ui.warn(str(e))
         return False
     try:
         subprocess.run(['sudo', 'service', 'apache2', 'restart'], check=True)
     except subprocess.CalledProcessError as e:
-        print(yellow("Error Restarting Apache."))
-        print(yellow(str(e)))
+        ui.warn("Error Restarting Apache.")
+        ui.warn(str(e))
         return False
     return True
     
 # Step 10: Generate default config file for WOL page if one doesn't already exist
 def _10_prep_config_file():
     if rwsols_config_user.exists():
-        print("An existing user config file already exists, so a default one will not be created.")
+        ui.say("An existing user config file already exists, so a default one will not be created.")
         return True
 
     try:
         subprocess.run(['cp', str(rwsols_config_sample), str(rwsols_config_user)], check=True)
     except subprocess.CalledProcessError:
-        print(yellow("Error creating default config file."))
+        ui.warn("Error creating default config file.")
         return False
 
-    print("A default WOL config file has been created for you.")
+    ui.say("A default WOL config file has been created for you.")
     return True
 
 # Step 11: Help with editing of the config file
 def _11_modify_config_file():
     if not rwsols_config_user.exists():
-        print(yellow("Config file couldn't be located for editing!"))
+        ui.warn("Config file couldn't be located for editing!")
         return False
 
     # Check for the variables we are going to edit
@@ -659,7 +661,7 @@ def _11_modify_config_file():
             if "$USE_HTTPS" in line:
                 use_https_found = True
     if not use_https_found or not approved_hash_found:
-        print(yellow("The RWSOLS config file is improperly formatted. Consider deleting your config.php file and re-running this script to recreate the default config."))
+        ui.warn("The RWSOLS config file is improperly formatted. Consider deleting your config.php file and re-running this script to recreate the default config.")
         return False
 
 
@@ -672,19 +674,19 @@ def _11_modify_config_file():
         try:
             subprocess.run(['sudo', 'sed', '-i', 's/.*$USE_HTTPS.*/$USE_HTTPS = true;/g', rwsols_config_user], check=True)
         except subprocess.CalledProcessError as e:
-            print(yellow("Error setting USE_HTTPS variable."))
-            print(yellow(str(e)))
+            ui.warn("Error setting USE_HTTPS variable.")
+            ui.warn(str(e))
             return False
     else:
         try:
             subprocess.run(['sudo', 'sed', '-i', 's/.*$USE_HTTPS.*/$USE_HTTPS = false;/g', rwsols_config_user], check=True)
         except subprocess.CalledProcessError as e:
-            print(yellow("Error setting USE_HTTPS variable."))
-            print(yellow(str(e)))
+            ui.warn("Error setting USE_HTTPS variable.")
+            ui.warn(str(e))
             return False
 
     # Generate Password Hash for user. If one already appears to be set, ask if they want to change it or leave it.
-    print("")
+    ui.say("")
     get_password = False
     with open(rwsols_config_user) as f:
         for line in f:
@@ -692,19 +694,19 @@ def _11_modify_config_file():
                 if "NULL" in line:
                     get_password = True
                 else:
-                    pw_option, _ = multi_choice('An existing password is already configured.', ['I would like to keep my currently configured password.','I want to change my password.'])
+                    pw_option, _ = ui.choose('An existing password is already configured.', ['I would like to keep my currently configured password.','I want to change my password.'])
                     if pw_option == 1:
-                        print("Ok, the currently set password will not be changed.")
+                        ui.say("Ok, the currently set password will not be changed.")
                     else:
                         get_password = True
                 break
 
     if get_password:
         while True:
-            p1 = getpass.getpass('Please enter the password that you would like to use to access your RWSOLS Web Interface: ')
-            p2 = getpass.getpass('Please re-enter the password to confirm: ')
+            p1 = ui.ask_secret('Please enter the password that you would like to use to access your RWSOLS Web Interface', strip=False)
+            p2 = ui.ask_secret('Please re-enter the password to confirm', strip=False)
             if p1 != p2:
-                print("The provided passwords do not match. Please try again...\n")
+                ui.say("The provided passwords do not match. Please try again...\n")
             else:
                 break
 
@@ -714,8 +716,8 @@ def _11_modify_config_file():
             r = subprocess.run(['php', '-r', 'echo password_hash(\'' + p1 + '\', PASSWORD_DEFAULT);'], capture_output=True, check=True)
             pw_hash = r.stdout.decode('utf8').strip()
         except subprocess.CalledProcessError as e:
-            print(yellow("Error hashing password."))
-            print(yellow(str(e)))
+            ui.warn("Error hashing password.")
+            ui.warn(str(e))
             return False
 
         # Save the Hash, Using the fileinput method here, because sed is a nightmare with escape characters
@@ -729,49 +731,25 @@ def _11_modify_config_file():
                 else:
                     print(line, end="")
         if pw_updated:
-            print('Password hashed securely and added to configuration file.')
+            ui.say('Password hashed securely and added to configuration file.')
         else:
-            print(yellow('The password could not be updated.'))
+            ui.warn('The password could not be updated.')
             return False
 
-    print("\nFor the remainder of the configuration, it's easiest for you to edit the file directly.")
-    input("Press enter to open the config file with nano for editing so you can input your values. Save and exit when done.")
+    ui.say("\nFor the remainder of the configuration, it's easiest for you to edit the file directly.")
+    ui.pause("Press enter to open the config file with nano for editing so you can input your values. Save and exit when done.")
     try:
         subprocess.run(['nano', str(rwsols_config_user)], check=True)
     except subprocess.CalledProcessError:
-        print(yellow("Error editing config file."))
+        ui.warn("Error editing config file.")
         return False
-    print("The config file has been written.\n")
+    ui.say("The config file has been written.\n")
     return True
 
 # Step 12: Copy configured webroot to default apache directory (just run step 3 again)
 def _12_copy_webroot():
     return _03_copy_webroot()
 
-
-# Prompt Function for Multiple Choice Questions.
-# query: question string to be asked. e.g. "What is the best sandwich ingredient?"
-# options: list of possible choices. e.g. ['bacon', 'lettuce', 'tomato']
-# Returns the 1-indexed selection number (1 if you choose bacon), and the value as a tuple (bacon)
-def multi_choice(query, options):
-    while True:
-        print(query)
-
-        for i in range(len(options)):
-            if i >=9:
-                print(" " + str(i+1) + ": " + options[i])
-            else:
-                print(" " + str(i+1) + ":  " + options[i])
-            
-
-        try:
-            choice = int(input("Choose an number from the list (1-" + str(len(options))  + "): "))
-            if choice in range(1, len(options)+1):
-                return choice, options[choice-1]
-            else:
-                raise ValueError
-        except ValueError:
-            print(yellow("Please choose a number from the list!\n"))
 
 # Ensures the urls global list var is populated appropriately
 def fill_urls_var():
@@ -791,26 +769,26 @@ def fill_urls_var():
                 urls = [host.strip() for host in hosts]
             else:
                 urls = [last.strip()]
-            print("The following URLs will be checked: " + " | ".join(urls))
+            ui.say("The following URLs will be checked: " + " | ".join(urls))
         except (subprocess.CalledProcessError, OSError, IOError) as e:
-            print(yellow("Could not automatically determine the desired URL(s) from ddclient."))
-            print(yellow(str(e)))
-            print("\nIf you ARE running ddclient locally (i.e. Configured by this script), but this failed, it's possible your configuration file is incorrect.")
-            print("You can always re-run that step by deleting the 'setup_ddns' dot file in this folder and re-running this script.")
-            print("Or, edit your ddclient config file manually at " + str(ddns_real_config) + ".\n")
+            ui.warn("Could not automatically determine the desired URL(s) from ddclient.")
+            ui.warn(str(e))
+            ui.say("\nIf you ARE running ddclient locally (i.e. Configured by this script), but this failed, it's possible your configuration file is incorrect.")
+            ui.say("You can always re-run that step by deleting the 'setup_ddns' dot file in this folder and re-running this script.")
+            ui.say("Or, edit your ddclient config file manually at " + str(ddns_real_config) + ".\n")
     # If we couldn't grab it from ddclient config file either, then we must ask user
     if len(urls) == 0:
-        print("If you're running your DDNS updating service elsewhere, then don't worry about that and enter the URL(s) manually for checking.")
-        urls = enter_urls('Enter all the URLs that should be pointing at your public IP (separate with commas if multiple): ')
+        ui.say("If you're running your DDNS updating service elsewhere, then don't worry about that and enter the URL(s) manually for checking.")
+        urls = enter_urls('Enter all the URLs that should be pointing at your public IP (separate with commas if multiple)')
 
 # Prompt Function for entering multiple comma separated, proper-format FQDNs
 # query: Request to be presented. e.g. Please enter one or more domain names, comma separated
 # Returns a list of validated FQDNs
 def enter_urls(query):
     while True:
-        v = input(query)
+        v = ui.ask(query)
         if v == "":
-            print(yellow("A hostname is required. Please try again."))
+            ui.warn("A hostname is required. Please try again.")
             continue
         if ',' in v:
             hosts = v.split(",")
@@ -820,10 +798,10 @@ def enter_urls(query):
         invalid_hosts = []
         for host in hosts:
             if not is_valid_hostname(host):
-                print(yellow("'" + host + "' is an invalid hostname."))
+                ui.warn("'" + host + "' is an invalid hostname.")
                 invalid_hosts.append(host)
         if len(invalid_hosts) > 0:
-            print("Please try again.\n")
+            ui.say("Please try again.\n")
             continue
         else:
             return hosts
@@ -880,30 +858,30 @@ def rwsols_serving_status():
     try:
         txt = urllib.request.urlopen("http://" + urls[0] + "/knock_knock.txt").read().decode('utf8')
     except ValueError:
-        print(yellow("The HTTP URL is of an invalid format."))
+        ui.warn("The HTTP URL is of an invalid format.")
     except urllib.error.HTTPError as e:
-        print(yellow(f"Couldn't connect to port 80 due to a HTTP Error ({str(e)})."))
+        ui.warn(f"Couldn't connect to port 80 due to a HTTP Error ({str(e)}).")
         if e.code == 421:
-            print(yellow("The hostname allowlist rejected this name. Add " + urls[0] + " to $ALLOWED_HOSTS in config.php."))
+            ui.warn("The hostname allowlist rejected this name. Add " + urls[0] + " to $ALLOWED_HOSTS in config.php.")
     except urllib.error.URLError as e:
-        print(yellow(f"Couldn't connect to port 80 due to a URL Error ({str(e)})."))
+        ui.warn(f"Couldn't connect to port 80 due to a URL Error ({str(e)}).")
     else:
         http_server = True
         if txt.startswith("hello?"):
             http_rwsols = True
-            print(magenta("Your RWSOLS is accessible on port 80!"))
+            ui.success("Your RWSOLS is accessible on port 80!")
         else:
-            print(yellow("Something was found at " + urls[0] + " port 80, but it was not RWSOLS."))
+            ui.warn("Something was found at " + urls[0] + " port 80, but it was not RWSOLS.")
 
     # Load the test page via https on port 443
     try:
         txt = urllib.request.urlopen("https://" + urls[0] + "/knock_knock.txt").read().decode('utf8')
     except ValueError:
-        print(yellow("The HTTPS URL is of an invalid format."))
+        ui.warn("The HTTPS URL is of an invalid format.")
     except urllib.error.HTTPError as e:
-        print(yellow(f"Couldn't connect to port 443 due to an HTTP Error ({str(e)})."))
+        ui.warn(f"Couldn't connect to port 443 due to an HTTP Error ({str(e)}).")
     except (urllib.error.URLError, ssl.SSLCertVerificationError):
-        print(yellow("Couldn't to connect to port 443 with strict checking for signed certs."))
+        ui.warn("Couldn't to connect to port 443 with strict checking for signed certs.")
         # There was an SSL Cert Error, which means that it still might work with a self-signed cert
         # So, we check again, after allow self-signed certs:
         try:
@@ -912,32 +890,32 @@ def rwsols_serving_status():
             self_signed_ssl_context.verify_mode=ssl.CERT_NONE
             txt = urllib.request.urlopen("https://" + urls[0] + "/knock_knock.txt",  context=self_signed_ssl_context).read().decode('utf8')
         except ValueError:
-            print(yellow("The HTTPs URL is of an invalid format."))
+            ui.warn("The HTTPs URL is of an invalid format.")
         except urllib.error.HTTPError as e:
-            print(yellow(f"Couldn't connect to port 443, even when allowing self-signed certs, due to a HTTP Error ({str(e)})"))
+            ui.warn(f"Couldn't connect to port 443, even when allowing self-signed certs, due to a HTTP Error ({str(e)})")
         except urllib.error.URLError as e:
-            print(yellow(f"Couldn't connect to port 443, even when allowing self-signed certs, due to a URL Error ({str(e)})."))
+            ui.warn(f"Couldn't connect to port 443, even when allowing self-signed certs, due to a URL Error ({str(e)}).")
         except ssl.SSLError as e:
-            print(yellow("The following SSL error was encountered while trying to check if the server would respond (with self-signed certs allowed):"))
-            print(yellow(str(e)))
+            ui.warn("The following SSL error was encountered while trying to check if the server would respond (with self-signed certs allowed):")
+            ui.warn(str(e))
         else:
             https_server = True
             if txt.startswith("hello?"):
                 https_rwsols = True
-                print(magenta("Your RWSOLS is accessible on port 443, but it is using a self-signed SSL certificate!"))
+                ui.success("Your RWSOLS is accessible on port 443, but it is using a self-signed SSL certificate!")
             else:
-                print(yellow("Something was found at " + urls[0] + " port 443, but it was not RWSOLS."))
+                ui.warn("Something was found at " + urls[0] + " port 443, but it was not RWSOLS.")
     except ssl.SSLError as e:
-            print(yellow("The following SSL error was encountered while trying to verify the server:"))
-            print(yellow(str(e)))
+            ui.warn("The following SSL error was encountered while trying to verify the server:")
+            ui.warn(str(e))
     else:
         https_server = True
         https_signed = True
         if txt.startswith("hello?"):
             https_rwsols = True
-            print(magenta("Your RWSOLS is accessible on port 443 and is using a properly signed SSL certificate!"))
+            ui.success("Your RWSOLS is accessible on port 443 and is using a properly signed SSL certificate!")
         else:
-            print(yellow("Something was found at " + urls[0] + " port 443, but it was not RWSOLS."))
+            ui.warn("Something was found at " + urls[0] + " port 443, but it was not RWSOLS.")
 
     
     return http_server, http_rwsols, https_server, https_rwsols, https_signed

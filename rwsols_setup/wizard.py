@@ -7,6 +7,7 @@ from .errors import SetupError
 from .hosts import validate_hostname
 from .phpconfig import ConfigFile
 from .state import MODES, default_mode, load_state, new_state, save_state
+from .ui import Option
 
 MODE_LABELS = {
     'none': 'None: LAN only. RWSOLS is only reachable from inside my home network.',
@@ -14,6 +15,13 @@ MODE_LABELS = {
     'tunnel': 'Cloudflare Tunnel: no inbound ports; optional Cloudflare Access login in front.',
 }
 MODE_ORDER = ['none', 'port_forward', 'tunnel']
+MODE_HELP = [
+    'LAN only: nothing is exposed to the internet. Pick this if you only use RWSOLS at home (or over your own VPN).',
+    'Port forwarding: your router forwards ports 80/443 to this Pi and dynamic DNS keeps a name pointed at your home IP. '
+    'Pick this if you already run it that way, or cannot use Cloudflare.',
+    'Cloudflare Tunnel: this Pi opens an outbound connection to Cloudflare, so no router ports are needed and your home IP '
+    'stays hidden. Needs a domain on Cloudflare; optional login (Access) in front.',
+]
 DEFAULTS = {'ALLOWED_HOSTS': [], 'ALLOW_LOCALHOST': False, 'LOG_HOST_REJECTIONS': False,
             'TUNNEL_HOSTNAME': None, 'TUNNEL_ORIGIN_BIND': '127.0.0.1', 'TUNNEL_ORIGIN_PORT': 8080,
             'ACCESS_TEAM_DOMAIN': None, 'ACCESS_AUD': None}
@@ -31,10 +39,10 @@ ACCESS_SCOPES = [
 
 def choose_mode(ctx):
     dflt = default_mode(ctx.repo_dir)
-    ctx.ui.say('')
-    ctx.ui.say('Remote access: how will you reach RWSOLS from outside your home network?')
+    ctx.ui.heading('Remote access')
+    ctx.ui.explain('How will you reach RWSOLS from outside your home network?', MODE_HELP)
     if dflt == 'port_forward':
-        ctx.ui.say('(An existing port-forwarding based install was detected, so that is the default.)')
+        ctx.ui.hint('An existing port-forwarding based install was detected, so that is the default.')
     i, _ = ctx.ui.choose('Choose a remote access mode.', [MODE_LABELS[m] for m in MODE_ORDER], MODE_ORDER.index(dflt) + 1)
     return MODE_ORDER[i - 1]
 
@@ -56,6 +64,13 @@ def ddclient_hosts(runner):
 
 def read_settings(cfg):
     return dict((k, cfg.get(k, v)) for k, v in DEFAULTS.items())
+
+
+def _tunnel_hostname(v):
+    h = validate_hostname(v)
+    if '.' not in h or h.startswith('[') or re.fullmatch(r'[0-9.]+', h):
+        raise ValueError('use a full domain name that is on Cloudflare')
+    return h
 
 
 class RemoteAccessWizard(object):
@@ -100,33 +115,43 @@ class RemoteAccessWizard(object):
 
     def _plan_tunnel(self):
         ui = self.ui
-        ui.say('')
-        ui.say('--- Cloudflare Tunnel ---')
+        ui.heading('Cloudflare Tunnel')
         ui.say('cloudflared makes an outbound-only connection to Cloudflare. Remove any router port forwards for RWSOLS.')
         prev = self.st.get('tunnel', {})
-        while True:
-            h = ui.ask('Public hostname for RWSOLS (e.g. wol.example.com)', self.new['TUNNEL_HOSTNAME'] or prev.get('hostname'))
+        ddns_names = ddclient_hosts(self.ctx.runner)
+        default_host = self.new['TUNNEL_HOSTNAME'] or prev.get('hostname')
+        if not default_host and ddns_names:
+            default_host = 'wol.' + ddns_names[0]
             try:
-                h = validate_hostname(h)
-                if '.' not in h or h.startswith('[') or re.fullmatch(r'[0-9.]+', h):
-                    raise ValueError('use a full domain name that is on Cloudflare')
-                break
-            except ValueError as e:
-                ui.warn(str(e))
+                _tunnel_hostname(default_host)
+            except ValueError:
+                default_host = None
+        lines = [
+            'A dedicated subdomain (e.g. wol.example.com) is recommended over the bare domain (example.com).',
+            'The tunnel takes over that name\'s DNS record (a proxied CNAME to Cloudflare). On its own name, RWSOLS leaves the '
+            'bare domain free for dynamic DNS or a website, and you can add other tunnelled services later, each on its own name '
+            '(e.g. nas.example.com).',
+            'The bare domain works too, but then it cannot also be your dynamic DNS name.']
+        if ddns_names:
+            lines.append('Dynamic DNS keeps updating %s to your home IP exactly as before. The tunnel hostname is a separate DNS '
+                         'record, and the two coexist.' % ', '.join(ddns_names))
+        ui.explain('Tunnel hostname', lines)
+        h = ui.ask('Public hostname for RWSOLS (e.g. wol.example.com)', default_host, validator=_tunnel_hostname)
         self.new['TUNNEL_HOSTNAME'] = h
-        while True:
-            port = ui.ask('Local port for the loopback Apache listener cloudflared connects to', str(self.new['TUNNEL_ORIGIN_PORT']))
-            if port.isdigit() and 1024 <= int(port) <= 65535:
-                if tunnel.check_origin_port(self.ctx, self.st, self.new['TUNNEL_ORIGIN_BIND'], int(port)):
-                    self.new['TUNNEL_ORIGIN_PORT'] = int(port)
-                    break
-                ui.warn('Port %s on %s is already in use. Choose another.' % (port, self.new['TUNNEL_ORIGIN_BIND']))
-            else:
-                ui.warn('Enter a port between 1024 and 65535.')
-        hosts = ddclient_hosts(self.ctx.runner)
-        if tunnel.ddns_overlap(h, '\n'.join([', '.join(hosts)])):
+        if tunnel.ddns_overlap(h, '\n'.join([', '.join(ddns_names)])):
             ui.warn('%s is also in your ddclient host list. The tunnel owns that DNS record (a proxied CNAME); '
                     'ddclient would keep overwriting it with your IP. Remove it from /etc/ddclient.conf.' % h)
+        ui.explain('Origin port', [
+            'cloudflared forwards visitors to a small Apache listener that only this Pi can reach (%s, loopback only). '
+            'The LAN site on ports 80/443 is not touched.' % self.new['TUNNEL_ORIGIN_BIND'],
+            'The default is fine unless something else on the Pi already uses that port.'])
+        self.new['TUNNEL_ORIGIN_PORT'] = ui.ask('Local port for the loopback Apache listener cloudflared connects to',
+                                                str(self.new['TUNNEL_ORIGIN_PORT']), validator=self._origin_port)
+        ui.explain('Automatic or manual setup', [
+            'Automatic: you paste a Cloudflare API token (created in the dashboard, used only for this run) and the wizard creates '
+            'the tunnel, the DNS record and the service for you. Needs your domain on Cloudflare.',
+            'Manual: you create the tunnel and its public hostname in the Cloudflare dashboard yourself and paste the tunnel token. '
+            'No API token needed; more clicking, fewer permissions given away.'])
         i, _ = ui.choose('How should the tunnel be set up?', [
             'Automatic: I will provide a Cloudflare API token and the wizard creates the tunnel, DNS record, and service.',
             'Manual: I created the tunnel in the Cloudflare dashboard and will paste its tunnel token.'],
@@ -135,18 +160,28 @@ class RemoteAccessWizard(object):
         if self.method == 'automatic':
             self.tunnel_name = ui.ask('Tunnel name', prev.get('name') or 'rwsols')
         else:
-            ui.say('')
-            ui.say('In the Cloudflare Zero Trust dashboard (Networks > Tunnels), create a Cloudflared tunnel and add a public hostname:')
-            ui.say('    Hostname: %s' % h)
-            ui.say('    Service:  HTTP  %s:%d' % (self.new['TUNNEL_ORIGIN_BIND'], self.new['TUNNEL_ORIGIN_PORT']))
-            ui.say('Then copy the tunnel token (the long string after "cloudflared ... --token").')
+            ui.explain('Create the tunnel in the dashboard', [
+                'In the Cloudflare Zero Trust dashboard (Networks > Tunnels), create a Cloudflared tunnel and add a public hostname:',
+                '    Hostname: %s' % h,
+                '    Service:  HTTP  %s:%d' % (self.new['TUNNEL_ORIGIN_BIND'], self.new['TUNNEL_ORIGIN_PORT']),
+                'Then copy the tunnel token (the long string after "cloudflared ... --token").'])
+
+    def _origin_port(self, v):
+        if not (v.isdigit() and 1024 <= int(v) <= 65535):
+            raise ValueError('Enter a port between 1024 and 65535.')
+        bind = self.new['TUNNEL_ORIGIN_BIND']
+        if not tunnel.check_origin_port(self.ctx, self.st, bind, int(v)):
+            raise ValueError('Port %s on %s is already in use. Choose another.' % (v, bind))
+        return int(v)
 
     def _plan_access(self):
         ui = self.ui
-        ui.say('')
-        ui.say('--- Cloudflare Access (optional) ---')
-        ui.say('Access puts a login (email one-time code, SSO, ...) in front of RWSOLS at Cloudflare\'s edge,')
-        ui.say('so strangers never reach the Pi. RWSOLS also verifies the Access token and refuses tunnel requests without it.')
+        ui.heading('Cloudflare Access (optional)')
+        ui.explain('What Access adds', [
+            'Access puts a login (email one-time code, SSO, ...) in front of RWSOLS at Cloudflare\'s edge, so strangers never reach the Pi. '
+            'RWSOLS also verifies the Access token and refuses tunnel requests without it.',
+            'Recommended if the address will be reachable from anywhere. Skip it if the RWSOLS password alone is enough for you.',
+            'The Cloudflare Zero Trust free plan is enough for a home setup, but Zero Trust must be set up on your account first.'])
         enabled_before = bool(self.cur['ACCESS_AUD'])
         if not ui.confirm('Enable Cloudflare Access for %s?' % self.new['TUNNEL_HOSTNAME'], enabled_before):
             self.access_mode = 'off'
@@ -154,68 +189,133 @@ class RemoteAccessWizard(object):
             return
         if self.method == 'automatic':
             self.access_mode = 'automatic'
-            ui.say('Who may log in? (An Allow policy is created from these.)')
             self.identities = access.ask_identities(ui)
+            ui.explain('Service token', [
+                'A service token lets a script or app (not a person in a browser) pass the Access login by sending two headers. '
+                'Say yes only if you have such a client. The secret is shown once at the end and never stored.'])
             self.want_service_token = ui.confirm('Also create a service token for non-browser clients (scripts, apps)?', False)
         else:
             self.access_mode = 'manual'
             team, aud = access.ask_manual(ui)
             self.new.update(ACCESS_TEAM_DOMAIN=team, ACCESS_AUD=aud)
 
+    def _lan_name_candidate(self):
+        try:
+            return validate_hostname(self.ctx.hostname_fn().split('.')[0] + '.local')
+        except ValueError:
+            return None
+
+    def _reverse_dns_candidate(self):
+        """The name the LAN's DNS gives this Pi's IP, only if it resolves back to that same IP. Never raises."""
+        ip = self.lan_ip
+        if not ip:
+            return None
+        try:
+            name = self.ctx.resolver.reverse(ip)
+            if not name:
+                return None
+            name = validate_hostname(name)
+            if '.' not in name or name.startswith('[') or re.fullmatch(r'[0-9.]+', name):
+                return None
+            if ip not in (self.ctx.resolver.forward(name) or []):
+                return None
+            return name
+        except Exception:
+            return None
+
+    def _search_domain_candidates(self):
+        """<hostname>.<DNS search domain> names that resolve to this Pi's LAN IP. Never raises."""
+        found = []
+        try:
+            raw = self.ctx.runner.read_file('/etc/resolv.conf')
+            if not raw or not self.lan_ip:
+                return found
+            short = self.ctx.hostname_fn().split('.')[0]
+            for line in raw.decode('utf8', 'replace').splitlines():
+                parts = line.split()
+                if len(parts) < 2 or parts[0] not in ('search', 'domain'):
+                    continue
+                for domain in parts[1:]:
+                    try:
+                        name = validate_hostname(short + '.' + domain)
+                    except ValueError:
+                        continue
+                    if name not in found and self.lan_ip in (self.ctx.resolver.forward(name) or []):
+                        found.append(name)
+        except Exception:
+            pass
+        return found
+
+    def allowlist_options(self):
+        """Candidate names for the allowlist multi-select, in display order, with reasons and default ticks."""
+        tunnel_mode = self.mode == 'tunnel'
+        pf_mode = self.mode == 'port_forward'
+        saved = []
+        for h in self.cur['ALLOWED_HOSTS']:
+            try:
+                saved.append(validate_hostname(h))
+            except ValueError:
+                pass
+        opts = []
+
+        def add(name, why, checked=False, locked=False):
+            try:
+                name = validate_hostname(name)
+            except (ValueError, TypeError):
+                return
+            if name not in [o.value for o in opts]:
+                opts.append(Option(name, why, checked, locked))
+
+        if tunnel_mode:
+            add(self.new['TUNNEL_HOSTNAME'], 'your Cloudflare Tunnel hostname (required in tunnel mode)', True, True)
+        local = self._lan_name_candidate()
+        if local:
+            add(local, "this Pi's mDNS name; works from most devices on your home network", True)
+        rdns = self._reverse_dns_candidate()
+        if rdns:
+            add(rdns, "your router's local DNS name for this Pi (reverse lookup of %s)" % self.lan_ip, True)
+        for name in self._search_domain_candidates():
+            add(name, "this Pi's name in your network's DNS search domain (resolves to %s)" % self.lan_ip, True)
+        if self.lan_ip:
+            add(self.lan_ip, "this Pi's LAN IP; only tick it if you browse by IP, and reserve the address in your router so it does not change",
+                self.lan_ip in saved)
+        ddns = ddclient_hosts(self.ctx.runner)
+        if pf_mode:
+            ddns = list(dict.fromkeys(list(self.suggested) + ddns))
+        for h in saved:
+            if h not in ddns:
+                add(h, 'already on your list', True)
+        for h in ddns:
+            if pf_mode:
+                add(h, "your dynamic DNS name; needed for access through your router's port forwards", True)
+            else:
+                add(h, 'dynamic DNS name from your port forwarding setup; only needed while router port forwards still point at this Pi')
+        return opts
+
     def _plan_allowlist(self):
         ui = self.ui
-        ui.say('')
-        ui.say('--- Hostname allowlist (optional) ---')
-        ui.say('A DNS-rebinding attack makes a malicious website resolve to your Pi so a browser will talk to it.')
-        ui.say('An allowlist makes RWSOLS (Apache) answer only to host names you list; everything else gets an empty HTTP 421.')
-        cands = []
-        if self.mode == 'tunnel':
-            cands.append(self.new['TUNNEL_HOSTNAME'])
-        cands += self.suggested
-        try:
-            cands.append(validate_hostname(self.ctx.hostname_fn().split('.')[0] + '.local'))
-        except ValueError:
-            pass
-        existing = list(self.cur['ALLOWED_HOSTS'])
-        if self.mode != 'port_forward':
-            # DDNS names only matter for port forwarding; do not carry them into a LAN-only or tunnel setup.
-            ddns = set(ddclient_hosts(self.ctx.runner)) - set([self.new['TUNNEL_HOSTNAME']])
-            dropped = [h for h in existing if h in ddns]
-            existing = [h for h in existing if h not in ddns]
-            if dropped:
-                ui.say('Not suggesting %s (DDNS name used for port forwarding). Add it back below if you still use it.' % ', '.join(dropped))
-        cands += existing
-        if self.lan_ip and ui.confirm('Also allow browsing by LAN IP %s?' % self.lan_ip, False):
-            cands.append(self.lan_ip)
-        suggestion = []
-        for c in cands:
-            try:
-                v = validate_hostname(c)
-            except ValueError:
-                continue
-            if v not in suggestion:
-                suggestion.append(v)
+        ui.heading('Hostname allowlist (optional)')
+        ui.explain('Why an allowlist', [
+            'DNS rebinding: a malicious website can make its own name suddenly point at your Pi, so your browser (inside your home '
+            'network) talks to RWSOLS on its behalf.',
+            'An allowlist makes RWSOLS (Apache) answer only to the host names you list; every other name gets an empty HTTP 421.'])
         had = bool(self.cur['ALLOWED_HOSTS'])
         i, _ = ui.choose('Enable the hostname allowlist?', ['Yes, enable it (recommended).', 'No, accept any Host name (current default behavior).'],
                          1 if had else 2)
         if i == 2:
             self.new.update(ALLOWED_HOSTS=[], ALLOW_LOCALHOST=False)
             return
-        ui.warn('WARNING: once enabled, browsing RWSOLS by any name or IP that is NOT on the list stops working.')
-        while True:
-            raw = ui.ask('Allowed host names (comma separated)', ', '.join(suggestion))
-            try:
-                hosts = [validate_hostname(x) for x in raw.split(',') if x.strip()]
-                if not hosts:
-                    raise ValueError('enter at least one host name')
-                break
-            except ValueError as e:
-                ui.warn(str(e))
+        hosts = ui.choose_many('Allowed host names: tick the names RWSOLS should answer to', self.allowlist_options(),
+                               validator=validate_hostname, add_prompt='Host name or IP to add')
         if self.mode == 'tunnel' and self.new['TUNNEL_HOSTNAME'] not in hosts:
-            hosts.append(self.new['TUNNEL_HOSTNAME'])
-            ui.say('Added the tunnel hostname %s to the list.' % self.new['TUNNEL_HOSTNAME'])
+            hosts.insert(0, self.new['TUNNEL_HOSTNAME'])
         self.new['ALLOWED_HOSTS'] = list(dict.fromkeys(hosts))
+        ui.explain('Lockout warning', [
+            'Once enabled, browsing RWSOLS by any name or IP that is NOT on the list stops working.',
+            'To recover: re-run "python3 setup.py --remote-access" and choose not to enable the allowlist.'], style='warn')
+        ui.hint('Localhost (127.0.0.1) only matters if you open RWSOLS in a browser on the Pi itself or use a local health check.')
         self.new['ALLOW_LOCALHOST'] = ui.confirm('Also allow localhost / 127.0.0.1 / [::1]?', bool(self.cur['ALLOW_LOCALHOST']))
+        ui.hint('Rejected requests are logged to syslog (rate limited), which helps you see what you forgot to list.')
         self.new['LOG_HOST_REJECTIONS'] = ui.confirm('Log rejected requests to syslog (rate limited)?', bool(self.cur['LOG_HOST_REJECTIONS']))
 
     # ----- cloud phase -----
@@ -226,15 +326,16 @@ class RemoteAccessWizard(object):
         ui = self.ui
         token = self.ctx.env.pop('CLOUDFLARE_API_TOKEN', None)
         if not token:
-            ui.say('')
-            ui.say('Create an API token at https://dash.cloudflare.com/profile/api-tokens with at least these permissions:')
-            for s in TOKEN_SCOPES:
-                ui.say('    ' + s)
+            lines = [
+                'The wizard needs it to create the tunnel and the DNS record (and the Access login) in your Cloudflare account.',
+                'It is used only during this run, kept in memory and never written to disk or config.',
+                'Create it at https://dash.cloudflare.com/profile/api-tokens with at least these permissions:']
+            lines += ['    ' + x for x in TOKEN_SCOPES]
             if self.access_mode == 'automatic' or self.st.get('access', {}).get('app_id'):
-                ui.say('  and for Cloudflare Access:')
-                for s in ACCESS_SCOPES:
-                    ui.say('    ' + s)
-            ui.say('(Or set the CLOUDFLARE_API_TOKEN environment variable and re-run.) The token is kept in memory only.')
+                lines.append('  and for Cloudflare Access:')
+                lines += ['    ' + x for x in ACCESS_SCOPES]
+            lines.append('(Or set the CLOUDFLARE_API_TOKEN environment variable and re-run.)')
+            ui.explain('Cloudflare API token', lines)
             token = ui.ask_secret('Cloudflare API token')
         if not token:
             raise SetupError('No API token provided.')
@@ -313,11 +414,11 @@ class RemoteAccessWizard(object):
                 tunnel.install_service(ctx, self.tunnel_token)
             st['tunnel']['service_installed'] = True
             t = st['tunnel']
-            for label, ok, detail in tunnel.verify(ctx, n['TUNNEL_HOSTNAME'], n['TUNNEL_ORIGIN_BIND'], n['TUNNEL_ORIGIN_PORT'],
-                                                   access_on, self._api, t.get('account_id'), t.get('id')):
-                ui.say('  [%s] %s%s' % ('ok' if ok else 'FAIL', label, '' if ok else ' (%s)' % detail))
-                if not ok:
-                    failures.append(label)
+            results = tunnel.verify(ctx, n['TUNNEL_HOSTNAME'], n['TUNNEL_ORIGIN_BIND'], n['TUNNEL_ORIGIN_PORT'],
+                                    access_on, self._api, t.get('account_id'), t.get('id'))
+            if results:
+                ui.checklist('Verifying the tunnel', results)
+            failures = [label for label, ok, detail in results if not ok]
         st['mode'] = self.mode
         st['access'].update(enabled=access_on)
         st['allowlist'] = {'enabled': bool(n['ALLOWED_HOSTS'])}
@@ -330,18 +431,20 @@ class RemoteAccessWizard(object):
         ui = self.ui
         if self.service_token:
             access.show_service_token_once(ui, self.service_token)
+        lines, warnings = [], []
         if self.mode == 'tunnel':
-            ui.say('')
-            ui.say('Cloudflare Tunnel is set up: https://%s' % self.new['TUNNEL_HOSTNAME'])
-            ui.warn('Remove any router port forwards (80/443) that point at RWSOLS; they are no longer needed.')
+            lines.append('Cloudflare Tunnel is set up: https://%s' % self.new['TUNNEL_HOSTNAME'])
+            warnings.append('Remove any router port forwards (80/443) that point at RWSOLS; they are no longer needed.')
             if self.ctx.runner.path_exists('/etc/apache2/sites-enabled/000-default-le-ssl.conf'):
-                ui.warn('A Let\'s Encrypt certificate issued via certbot --apache renews over HTTP-01 on port 80, which will stop '
-                        'working once port 80 is closed. Switch to a DNS-01 challenge (e.g. a certbot DNS plugin) or use a self-signed LAN certificate.')
+                warnings.append('A Let\'s Encrypt certificate issued via certbot --apache renews over HTTP-01 on port 80, which will stop '
+                                'working once port 80 is closed. Switch to a DNS-01 challenge (e.g. a certbot DNS plugin) or use a self-signed LAN certificate.')
             if failures:
-                ui.warn('Some checks failed: ' + '; '.join(failures))
+                warnings.append('Some checks failed: ' + '; '.join(failures))
         if self.new['ALLOWED_HOSTS']:
-            ui.say('Allowed hosts: ' + ', '.join(self.new['ALLOWED_HOSTS']))
-            ui.say('TLS note: Apache still completes the TLS handshake for unlisted SNI names; the allowlist rejects them at the HTTP layer.')
+            lines.append('Allowed hosts: ' + ', '.join(self.new['ALLOWED_HOSTS']))
+            lines.append('TLS note: Apache still completes the TLS handshake for unlisted SNI names; the allowlist rejects them at the HTTP layer.')
+        if lines or warnings:
+            ui.summary('Remote access summary', lines, warnings)
 
     # ----- removal -----
 
@@ -367,8 +470,7 @@ class RemoteAccessWizard(object):
         else:
             lines.append('Cleared tunnel/Access keys in config.php (re-run setup to copy it to the webroot)')
         apache.apply_allowed_hosts(ctx, apache.render_allowed_hosts_conf(hosts, self.cur['ALLOW_LOCALHOST']))
-        for ln in lines:
-            ui.say('  - ' + ln)
+        ui.explain('Tunnel removal', ['- ' + ln for ln in lines])
         if ctx.runner.run(['which', 'cloudflared'], check=False, read_only=True).returncode == 0 and \
                 ui.confirm('Also uninstall the cloudflared package?', False):
             ctx.runner.run(['apt-get', 'remove', '-y', 'cloudflared'], sudo=True)

@@ -1,8 +1,8 @@
 """Injectable seams: command runner, HTTP transport, UI, and the Context that bundles them."""
-import getpass
 import os
 import socket
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -105,42 +105,42 @@ class UrllibTransport(object):
             raise NetworkError('Network error for %s %s: %s' % (method, url.split('?')[0], getattr(e, 'reason', e)))
 
 
-class ConsoleUI(object):
-    def say(self, text=''):
-        print(text)
+class SystemResolver(object):
+    """Reverse and forward DNS lookups with a hard timeout. Never raises: failure means None / []."""
 
-    def warn(self, text):
-        print('\033[0;33m' + text + '\033[0m')
+    def __init__(self, timeout=2.0):
+        self.timeout = timeout
 
-    def ask(self, prompt, default=None):
-        v = input(prompt + (' [%s]' % default if default else '') + ': ').strip()
-        return v if v else (default or '')
+    def _call(self, fn, *args):
+        box = []
 
-    def ask_secret(self, prompt):
-        return getpass.getpass(prompt + ': ').strip()
+        def work():
+            try:
+                box.append(fn(*args))
+            except Exception:
+                pass
 
-    def confirm(self, prompt, default=False):
-        while True:
-            v = input('%s [%s]: ' % (prompt, 'Y/n' if default else 'y/N')).strip().lower()
-            if v == '':
-                return default
-            if v in ('y', 'yes'):
-                return True
-            if v in ('n', 'no'):
-                return False
+        t = threading.Thread(target=work)
+        t.daemon = True
+        t.start()
+        t.join(self.timeout)
+        return box[0] if box else None
 
-    def choose(self, query, options, default=None):
-        """Returns (1-based index, option). Enter selects `default` (1-based) when given."""
-        while True:
-            print(query)
-            for i, o in enumerate(options):
-                print((' %d: %s' if i >= 9 else ' %d:  %s') % (i + 1, o) + ('  (default)' if default == i + 1 else ''))
-            v = input('Choose a number from the list (1-%d): ' % len(options)).strip()
-            if v == '' and default:
-                return default, options[default - 1]
-            if v.isdigit() and 1 <= int(v) <= len(options):
-                return int(v), options[int(v) - 1]
-            self.warn('Please choose a number from the list!\n')
+    def reverse(self, ip):
+        """Name the resolver returns for `ip`, or None."""
+        try:
+            res = self._call(socket.gethostbyaddr, ip)
+            return res[0] if res else None
+        except Exception:
+            return None
+
+    def forward(self, name):
+        """IPv4 addresses `name` resolves to (possibly empty)."""
+        try:
+            res = self._call(socket.gethostbyname_ex, name)
+            return list(res[2]) if res else []
+        except Exception:
+            return []
 
 
 def port_is_free(bind, port):
@@ -156,7 +156,7 @@ def port_is_free(bind, port):
 
 class Context(object):
     def __init__(self, runner, http, ui, repo_dir, dry_run=False, force=False, env=None,
-                 sleep=time.sleep, port_free=port_is_free, hostname_fn=socket.gethostname):
+                 sleep=time.sleep, port_free=port_is_free, hostname_fn=socket.gethostname, resolver=None):
         self.repo_dir = repo_dir
         self.ui = ui
         self.http = http
@@ -166,6 +166,7 @@ class Context(object):
         self.sleep = sleep
         self.port_free = port_free
         self.hostname_fn = hostname_fn
+        self.resolver = resolver or SystemResolver()
         self.runner = DryRunRunner(runner, ui) if dry_run else runner
         self.config_path = os.path.join(repo_dir, 'www', 'html', 'config.php')
         self.state_path = os.path.join(repo_dir, '.rwsols_remote_access.json')
