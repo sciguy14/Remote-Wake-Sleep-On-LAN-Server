@@ -11,6 +11,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from rwsols_setup.dnscheck import DOH_URL  # noqa: E402
 from rwsols_setup.runtime import CmdResult, Context, HttpResponse  # noqa: E402
 
 API_TOKEN = 'TESTAPITOKEN-0123456789abcdef'
@@ -39,6 +40,9 @@ class FakeRunner(object):
         self.configtest_ok = True
         self.packages = set()    # installed apt packages (only the ones tests care about)
         self.apt_ok = True
+        self.groups = {'www-data'}
+        self.stat_out = 'root:root 644'
+        self.found = []          # what `find` prints
 
     def apt_config(self):
         """`apt-config dump` output derived from the apt.conf.d files written so far."""
@@ -88,6 +92,13 @@ class FakeRunner(object):
         elif argv[:2] == ['apache2ctl', 'configtest']:
             if not self.configtest_ok:
                 rc, out = 1, 'Syntax error'
+        elif argv[:1] == ['getent']:
+            rc = 0 if argv[-1] in self.groups else 2
+        elif argv[:1] == ['stat']:
+            rc = 0 if argv[-1] in self.files else 1
+            out = self.stat_out
+        elif argv[:1] == ['find']:
+            out = ''.join(p + chr(10) for p in self.found)
         elif argv[:1] == ['dpkg-query']:
             pkg = argv[-1]
             rc = 0 if pkg in self.packages else 1
@@ -136,6 +147,9 @@ class FakeCloudflare(object):
         self.policies = []
         self.service_tokens = []
         self.auth_domain = auth_domain
+        self.ns = {zone: ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'],   # public NS records per zone
+                   'elsewhere.example.net': ['ns1.dns-host.example', 'ns2.dns-host.example']}
+        self.doh_calls = []
         self.web = {}            # url -> (status, body) overrides for non-API fetches
         self.web_calls = []
         self.fail_with = None    # (status, message) to force an API failure
@@ -150,6 +164,8 @@ class FakeCloudflare(object):
         return '%s-%04d' % (prefix, self._n)
 
     def request(self, method, url, headers=None, body=None, timeout=20, follow_redirects=True):
+        if url.startswith(DOH_URL):
+            return self._doh(parse_qs(urlparse(url).query)['name'][0])
         if not url.startswith(BASE):
             self.web_calls.append((method, url, dict(headers or {})))
             if url in self.web:
@@ -169,6 +185,22 @@ class FakeCloudflare(object):
         if isinstance(res, HttpResponse):
             return res
         return HttpResponse(200, json.dumps({'success': True, 'errors': [], 'result': res}).encode(), {})
+
+    def _doh(self, name):
+        """Public DNS-over-HTTPS answer for an NS query. self.ns maps zone -> nameservers; None = lookup fails."""
+        self.doh_calls.append(name)
+        if self.ns is None:
+            return HttpResponse(503, b'', {})
+        name = name.rstrip('.').lower()
+        for zone, servers in self.ns.items():
+            if name == zone:
+                return HttpResponse(200, json.dumps({'Status': 0, 'Answer': [
+                    {'name': zone + '.', 'type': 2, 'data': s + '.'} for s in servers]}).encode(), {})
+            if name.endswith('.' + zone):
+                return HttpResponse(200, json.dumps({'Status': 3, 'Authority': [
+                    {'name': zone + '.', 'type': 6, 'data': 'ns. hostmaster. 1 2 3 4 5'}]}).encode(), {})
+        return HttpResponse(200, json.dumps({'Status': 3, 'Authority': [
+            {'name': name.rsplit('.', 1)[-1] + '.', 'type': 6, 'data': 'a. b. 1 2 3 4 5'}]}).encode(), {})
 
     def _err(self, status, msg):
         return HttpResponse(status, json.dumps({'success': False, 'errors': [{'code': 1000, 'message': msg}], 'result': None}).encode(), {})
