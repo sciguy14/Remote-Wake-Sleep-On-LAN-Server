@@ -51,10 +51,12 @@ $root = dirname(__DIR__, 2);
 require_once($root . '/www/html/includes/host_guard.php');
 require_once($root . '/www/html/includes/access_jwt.php');
 require_once($root . '/www/html/includes/request_gate.php');
+require_once($root . '/www/html/includes/login_throttle.php');
 require_once(__DIR__ . '/helpers.php');
 require_once(__DIR__ . '/test_host_guard.php');
 require_once(__DIR__ . '/test_access_jwt.php');
 require_once(__DIR__ . '/test_request_gate.php');
+require_once(__DIR__ . '/test_login_throttle.php');
 
 $passed = 0;
 $failed = 0;

@@ -84,6 +84,12 @@ $TUNNEL_ORIGIN_PORT = 8080;
 // When both are set, tunnel requests must carry a valid Access token. Setting only one denies all tunnel requests. Defaults = NULL.
 $ACCESS_TEAM_DOMAIN = NULL;
 $ACCESS_AUD = NULL;
+
+// Login throttling: after this many wrong passphrases from one client address within the lockout time, that client is locked out
+// (even with the right passphrase) for $LOGIN_LOCKOUT_SECONDS seconds. IPv6 clients are counted per /64 network. 0 disables throttling.
+// Installs whose config.php lacks these lines get the defaults shown here. Defaults = 5 and 900 (15 minutes).
+$LOGIN_MAX_ATTEMPTS = 5;
+$LOGIN_LOCKOUT_SECONDS = 900;
 // -------------------------------
 
 ?>
