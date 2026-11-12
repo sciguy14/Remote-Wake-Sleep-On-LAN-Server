@@ -17,9 +17,14 @@ Existing installs are unaffected unless they opt in. A `config.php` without the 
 - Setup script options: `--remote-access`, `--remove-tunnel`, `--dry-run` and `--force`. The Cloudflare API token is read from `CLOUDFLARE_API_TOKEN` or a hidden prompt and kept in memory only.
 - `--remove-tunnel` (also offered when switching away from Tunnel mode) removes what the wizard created, as recorded in `.rwsols_remote_access.json`, and lists what it left alone.
 - PHP and Python test suites (`tests/php`, `tests/python`).
+- Reworked setup wizard interface. Every question, including the older steps in `setup.py`, now goes through one UI layer (`rwsols_setup/ui.py`) with short explanation boxes before the questions, a results checklist for the tunnel verification and a closing summary. It uses `rich` when it is installed and the terminal is interactive; the script tries `sudo apt-get install -y python3-rich` once at startup (skipped for `--help`, `--dry-run` and non-interactive runs, never uses pip) and silently falls back to plain text prompts, which also work with piped input.
+- The hostname allowlist question is now a multi-select with a reason next to every candidate name (tunnel hostname, `<hostname>.local`, the router's reverse DNS name, LAN IP, names already on your list, dynamic DNS names). Type numbers to tick or untick, `a` to add your own name, Enter to accept. The tunnel hostname is required in Tunnel mode.
+- The wizard suggests the router's local DNS name for the Pi (reverse lookup of its LAN IP) when it forward-resolves back to the same IP. It also tries `<hostname>.<DNS search domain>`. Names in a local DNS zone that neither lookup reveals have to be added by hand (`a` in the list).
+- Tunnel mode suggests `wol.<first ddclient name>` as the tunnel hostname when ddclient is configured, and explains why a dedicated subdomain is recommended and that dynamic DNS keeps working next to the tunnel.
 - Wiki pages: Remote Access with Cloudflare Tunnel, Adding Cloudflare Access (optional), Configuration Reference and Security.
 
 ### Changed
+- The allowlist no longer silently drops dynamic DNS names outside Port forwarding mode. They are listed, unticked, with a note that they are only needed while router port forwards still point at the Pi. The LAN IP is no longer a separate yes/no question; it is an unticked option in the multi-select unless it was already on your list.
 - The setup script now asks how RWSOLS will be reached from outside the LAN before the DDNS steps. DDNS, public IP and port 80/443 checks only run in Port forwarding mode. In the other modes the script asks for the LAN name of the Pi and the LAN encryption choice instead.
 - Setup logic for remote access lives in a new `rwsols_setup` Python package used by `setup.py`.
 - When the request arrives through the tunnel listener, `index.php` does not redirect to HTTPS on its own (Cloudflare terminates TLS), and builds its default redirect with `https://`.

@@ -22,6 +22,8 @@ The setup script asks how you want to reach RWSOLS from outside your home networ
 
 Separately from the mode, you can turn on a hostname allowlist, so that Apache and PHP answer only to the host names you list (protection against DNS rebinding). See [Security](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Security).
 
+The setup script installs `python3-rich` (with apt, if it is available) for nicer prompts, and falls back to plain text prompts without it.
+
 Setup script options:
 
 - `python3 setup.py` runs the full setup.
