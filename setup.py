@@ -22,6 +22,7 @@ import ssl
 import fileinput
 import filecmp
 import datetime
+import argparse
 
 # Exit Handler
 def signal_handler(sig, frame):
@@ -38,6 +39,7 @@ ddns_temp_config=pathlib.Path('/tmp/ddclient.conf')
 ddns_real_config=pathlib.Path('/etc/ddclient.conf')
 rwsols_config_sample = script_dir.joinpath('www/html/config_sample.php')
 rwsols_config_user = script_dir.joinpath('www/html/config.php')
+remote_mode = "port_forward" # Options: "none","port_forward","tunnel" (how RWSOLS is reached from outside the LAN)
 
 # Colors
 black = lambda text: '\033[0;30m' + text + '\033[0m'
@@ -49,8 +51,41 @@ magenta = lambda text: '\033[0;35m' + text + '\033[0m'
 cyan = lambda text: '\033[0;36m' + text + '\033[0m'
 white = lambda text: '\033[0;37m' + text + '\033[0m'
 
+# Command line options
+def parse_args():
+    parser = argparse.ArgumentParser(description='Remote-Wake-Sleep-On-LAN-Server (RWSOLS) setup script')
+    parser.add_argument('--remote-access', action='store_true', help='Only run the remote access part (mode, hostname allowlist, Cloudflare Tunnel/Access).')
+    parser.add_argument('--remove-tunnel', action='store_true', help='Remove the Cloudflare Tunnel setup created by this script.')
+    parser.add_argument('--dry-run', action='store_true', help='With --remote-access/--remove-tunnel: print what would be done and change nothing (read-only API calls still happen).')
+    parser.add_argument('--force', action='store_true', help='With --remote-access: replace a conflicting DNS record for the tunnel hostname.')
+    args = parser.parse_args()
+    if (args.dry_run or args.force) and not (args.remote_access or args.remove_tunnel):
+        parser.error('--dry-run and --force require --remote-access or --remove-tunnel')
+    return args
+
+def make_context(args):
+    from rwsols_setup.runtime import Context, SystemRunner, UrllibTransport, ConsoleUI
+    return Context(SystemRunner(), UrllibTransport(), ConsoleUI(), str(script_dir), dry_run=args.dry_run, force=args.force)
+
 # Main Logic
 def main():
+    global urls, remote_mode
+    args = parse_args()
+    from rwsols_setup import wizard
+    from rwsols_setup.errors import SetupError
+    ctx = make_context(args)
+
+    if args.remove_tunnel or args.remote_access:
+        try:
+            if args.remove_tunnel:
+                wizard.run_remove_tunnel(ctx, copy_webroot=_12_copy_webroot)
+            else:
+                wizard.run_remote_access(ctx, urls, get_local_ip() or None, copy_webroot=_12_copy_webroot)
+        except SetupError as e:
+            print(red("\n" + str(e)))
+            sys.exit(1)
+        return
+
     # Intro
     print("")
     print(cyan(">>>                                                       <<<"))
@@ -79,17 +114,24 @@ def main():
     # Copy our web files to the Apache webroot
     run_step('_03_copy_webroot', 'Copy Unconfigured Webroot', False)
 
-    # ddclient DDNS Setup
-    run_step('_04_setup_ddns', 'Setup DDNS')
+    # How will RWSOLS be reached from outside the LAN?
+    remote_mode = wizard.choose_mode(ctx)
 
-    # Get Public IPv4 Address
-    run_step('_05_get_ip', 'Get Public IPv4 Address', False)
+    if remote_mode == "port_forward":
+        # ddclient DDNS Setup
+        run_step('_04_setup_ddns', 'Setup DDNS')
 
-    # Confirm functional URL
-    run_step('_06_check_urls', 'Check DNS URL Resolution', False)
+        # Get Public IPv4 Address
+        run_step('_05_get_ip', 'Get Public IPv4 Address', False)
 
-    # Check if our server is up and serving content on port 80
-    run_step('_07_server_check', 'Check if RWSOLS is accessible on port 80 and/or port 443', False)
+        # Confirm functional URL
+        run_step('_06_check_urls', 'Check DNS URL Resolution', False)
+
+        # Check if our server is up and serving content on port 80
+        run_step('_07_server_check', 'Check if RWSOLS is accessible on port 80 and/or port 443', False)
+    else:
+        # No public URL: DDNS, public IP and port 80/443 checks are skipped.
+        run_step('_07_lan_encryption_check', 'Choose LAN encryption', False)
 
     # Setup requested encryption options
     if encryption_mode == "certbot":
@@ -110,9 +152,26 @@ def main():
     # Create user copy of config file
     run_step('_11_modify_config_file', 'Modify WOL Config File', False)
 
+    # Hostname allowlist / Cloudflare Tunnel / Access: questions and config.php keys (must happen before the webroot copy)
+    try:
+        wiz = wizard.RemoteAccessWizard(ctx, remote_mode, urls if remote_mode == "port_forward" else [], get_local_ip() or None)
+        wiz.plan()
+        wiz.prepare_cloud()
+        wiz.write_config()
+    except SetupError as e:
+        print(red("\n" + str(e)))
+        sys.exit(1)
+
     # Copy webroot to apache webroot folder for web-serving
     # We do this again here, because now the config has been updated
     run_step('_12_copy_webroot', 'Copy Configured Webroot', False)
+
+    # Apply the Apache allowlist, tunnel vhost and cloudflared service, then verify
+    try:
+        wiz.apply_local()
+    except SetupError as e:
+        print(red("\n" + str(e)))
+        sys.exit(1)
 
     print("Automatic Setup is now complete.")
 
@@ -438,6 +497,20 @@ def _07_server_check():
         return True
 
 
+# Setup Step 7 (None/Tunnel modes): there is no public URL, so only ask about LAN encryption, using a LAN name
+def _07_lan_encryption_check():
+    global urls, encryption_mode
+    default_name = socket.gethostname().split('.')[0] + '.local'
+    while True:
+        v = input('Name used to reach this Pi on your LAN (also the self-signed certificate name) [' + default_name + ']: ').strip() or default_name
+        if is_valid_hostname(v):
+            urls = [v]
+            break
+        print(yellow("'" + v + "' is an invalid hostname."))
+    c, _ = multi_choice('How should RWSOLS be served on your local network?', ['Keep the existing encryption settings.', 'Use a self-signed certificate (HTTPS; browsers will warn).', 'No encryption (plain HTTP on the LAN).'])
+    encryption_mode = ["skip", "self", "none"][c-1]
+    return True
+
 # Setup Step 8: Certbot config
 def _08_certbot_setup():
     # Let's Encrypt!
@@ -591,7 +664,10 @@ def _11_modify_config_file():
 
 
     # If we're encrypted, pre-set that value correctly in the config file.
-    http_server, http_rwsols, https_server, https_rwsols, https_signed = rwsols_serving_status()
+    if remote_mode != "port_forward" and encryption_mode in ("self", "none"):
+        https_rwsols = (encryption_mode == "self") # LAN listener we just configured: no probe needed
+    else:
+        http_server, http_rwsols, https_server, https_rwsols, https_signed = rwsols_serving_status()
     if https_rwsols:
         try:
             subprocess.run(['sudo', 'sed', '-i', 's/.*$USE_HTTPS.*/$USE_HTTPS = true;/g', rwsols_config_user], check=True)
@@ -807,6 +883,8 @@ def rwsols_serving_status():
         print(yellow("The HTTP URL is of an invalid format."))
     except urllib.error.HTTPError as e:
         print(yellow(f"Couldn't connect to port 80 due to a HTTP Error ({str(e)})."))
+        if e.code == 421:
+            print(yellow("The hostname allowlist rejected this name. Add " + urls[0] + " to $ALLOWED_HOSTS in config.php."))
     except urllib.error.URLError as e:
         print(yellow(f"Couldn't connect to port 80 due to a URL Error ({str(e)})."))
     else:
