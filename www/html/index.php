@@ -11,6 +11,39 @@ require_once('config.php');
 require_once(__DIR__ . '/includes/request_gate.php');
 rwsols_request_gate_run();
 
+//Decide the login before any output so a lockout can send a 429 status
+require_once(__DIR__ . '/includes/login_throttle.php');
+$login_ok = false;
+$login_locked_for = 0;
+if ( isset($_POST['password']) && !is_null($APPROVED_HASH) )
+{
+   $login_cfg = rwsols_login_config();
+   $login_key = rwsols_login_client_key($_SERVER, !empty($RWSOLS_IS_TUNNEL_ORIGIN));
+   $login_state = rwsols_login_check($login_key, $login_cfg);
+   if ($login_state['locked'])
+   {
+      $login_locked_for = $login_state['retry_after'];
+   }
+   elseif (password_verify($_POST['password'], $APPROVED_HASH))
+   {
+      $login_ok = true;
+      rwsols_login_record_success($login_key, $login_cfg);
+   }
+   else
+   {
+      $login_state = rwsols_login_record_failure($login_key, $login_cfg);
+      if ($login_state['locked'])
+      {
+         $login_locked_for = $login_state['retry_after'];
+      }
+   }
+   if ($login_locked_for > 0 && !headers_sent())
+   {
+      http_response_code(429);
+      header('Retry-After: ' . $login_locked_for);
+   }
+}
+
 //set headers that harden the HTTPS session
 if ($USE_HTTPS)
 {
@@ -112,7 +145,7 @@ else
             {
                 if (!is_null($APPROVED_HASH))
                 {
-                    if (password_verify($_POST['password'], $APPROVED_HASH))
+                    if ($login_ok)
 	                {
 						if ($_POST['submitbutton'] == "Wake Up!")
 						{
@@ -279,6 +312,11 @@ else
 						}
 					}
 					curl_close($ch);
+				}
+				elseif ($login_locked_for > 0)
+				{
+					$login_minutes = (int) ceil($login_locked_for / 60);
+					echo "<p style='color:#CC0000;'><b>Too many incorrect passphrase attempts. Try again in " . $login_minutes . ($login_minutes == 1 ? " minute." : " minutes.") . "</b></p>";
 				}
 				elseif (isset($_POST['submitbutton']))
 				{
