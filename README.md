@@ -22,13 +22,16 @@ The setup script asks how you want to reach RWSOLS from outside your home networ
 
 Separately from the mode, you can turn on a hostname allowlist, so that Apache and PHP answer only to the host names you list (protection against DNS rebinding). See [Security](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Security).
 
-The setup script installs `python3-rich` (with apt, if it is available) for nicer prompts, and falls back to plain text prompts without it.
+The setup script also offers to turn on automatic security updates for the operating system (Debian's `unattended-upgrades`, extended to the Raspberry Pi package archive), with an optional automatic restart at 04:00 when an update needs one. It asks once, and you can say no.
+
+The setup script installs `python3-rich` (with apt, if it is available) for nicer prompts, and falls back to plain text prompts without it. With `rich` on a Linux terminal, lists are driven with the arrow keys (Space to tick, Enter to accept); otherwise you type the numbers.
 
 Setup script options:
 
 - `python3 setup.py` runs the full setup.
 - `python3 setup.py --remote-access` runs only the mode, allowlist, Tunnel and Access questions. Run it after editing the remote access settings in `config.php` by hand.
 - `python3 setup.py --remove-tunnel` removes the Tunnel setup that the script created.
+- `python3 setup.py --auto-updates` runs only the automatic security updates question (see below).
 - `--dry-run` (only with `--remote-access` or `--remove-tunnel`) prints what would change and changes nothing. `--force` (use it with `--remote-access`) replaces a conflicting DNS record for the tunnel hostname.
 
 
@@ -52,7 +55,7 @@ After editing these by hand, run `python3 setup.py --remote-access` so the copy 
 
 Upgrading
 ---------
-Nothing changes unless you opt in. A `config.php` without the new settings behaves exactly as before. If you re-run `python3 setup.py` on an existing install, the only visible differences are one new question about the remote access mode (the default is port forwarding, which is the previous behavior) and an optional question about the hostname allowlist (the default is off).
+Nothing changes unless you opt in. A `config.php` without the new settings behaves exactly as before. If you re-run `python3 setup.py` on an existing install, the only visible differences are one new question about the remote access mode (the default is port forwarding, which is the previous behavior), an optional question about the hostname allowlist (the default is off), and a one-time question about automatic security updates (the default is yes; answer no to leave the system as it is).
 
 
 Moving from port forwarding to Cloudflare Tunnel

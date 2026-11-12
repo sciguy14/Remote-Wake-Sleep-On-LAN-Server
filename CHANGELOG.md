@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Existing installs are unaffected unless they opt in. A `config.php` without the new settings behaves exactly as before. Re-running `python3 setup.py` on an existing install adds one question (the remote access mode, defaulting to port forwarding) and an optional hostname allowlist question (defaulting to off).
+Existing installs are unaffected unless they opt in. A `config.php` without the new settings behaves exactly as before. Re-running `python3 setup.py` on an existing install adds one question (the remote access mode, defaulting to port forwarding), an optional hostname allowlist question (defaulting to off) and a one-time question about automatic security updates (defaulting to yes; answering no changes nothing).
 
 ### Added
 - Remote access modes in the setup wizard: None (LAN only, the default for new installs), Port forwarding (the previous behavior, the default for existing installs) and Cloudflare Tunnel. Re-running the wizard switches modes.
@@ -20,7 +20,9 @@ Existing installs are unaffected unless they opt in. A `config.php` without the 
 - Reworked setup wizard interface. Every question, including the older steps in `setup.py`, now goes through one UI layer (`rwsols_setup/ui.py`) with short explanation boxes before the questions, a results checklist for the tunnel verification and a closing summary. It uses `rich` when it is installed and the terminal is interactive; the script tries `sudo apt-get install -y python3-rich` once at startup (skipped for `--help`, `--dry-run` and non-interactive runs, never uses pip) and silently falls back to plain text prompts, which also work with piped input.
 - The hostname allowlist question is now a multi-select with a reason next to every candidate name (tunnel hostname, `<hostname>.local`, the router's reverse DNS name, LAN IP, names already on your list, dynamic DNS names). Type numbers to tick or untick, `a` to add your own name, Enter to accept. The tunnel hostname is required in Tunnel mode.
 - The wizard suggests the router's local DNS name for the Pi (reverse lookup of its LAN IP) when it forward-resolves back to the same IP. It also tries `<hostname>.<DNS search domain>`. Names in a local DNS zone that neither lookup reveals have to be added by hand (`a` in the list).
-- Tunnel mode suggests `wol.<first ddclient name>` as the tunnel hostname when ddclient is configured, and explains why a dedicated subdomain is recommended and that dynamic DNS keeps working next to the tunnel.
+- Tunnel mode suggests `rwsols.<first ddclient name>` as the tunnel hostname when ddclient is configured, and explains why a dedicated subdomain is recommended and that dynamic DNS keeps working next to the tunnel.
+- Arrow-key selection in the wizard when `rich` is in use on a Linux terminal: Up/Down to move, Space to tick or untick (multi-select), Enter to accept. Typing a number still works, and the numbered prompts remain the fallback (plain text mode, piped input, a list taller than the terminal, or any terminal error).
+- Optional automatic security updates. The setup script offers (once, default yes) to install `unattended-upgrades`, enable the daily run (`/etc/apt/apt.conf.d/20auto-upgrades`), and add the Raspberry Pi and Raspbian package archives plus an optional 04:00 automatic restart (`/etc/apt/apt.conf.d/52rwsols-auto-updates`). `python3 setup.py --auto-updates` runs only this step. Nothing is asked or changed when automatic updates are already on.
 - Wiki pages: Remote Access with Cloudflare Tunnel, Adding Cloudflare Access (optional), Configuration Reference and Security.
 
 ### Changed
