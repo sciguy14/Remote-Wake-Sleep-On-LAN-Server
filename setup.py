@@ -19,7 +19,7 @@ import socket
 import time
 import ssl
 import fileinput
-import filecmp
+
 import datetime
 import argparse
 from rwsols_setup import ui as ui_mod
@@ -250,7 +250,21 @@ def _03_copy_webroot():
         ui.warn("Error moving website contents to Apache webroot folder.")
         ui.warn(str(e))
         return False
+    secure_webroot_permissions()
     return True
+
+# config.php holds the passphrase hash: keep the served copy, and old webroot backups, away from other local users.
+# A failure here is reported but does not stop the setup.
+def secure_webroot_permissions():
+    from rwsols_setup import hardening
+    from rwsols_setup.errors import SetupError
+    from rwsols_setup.runtime import SystemRunner
+    try:
+        for line in hardening.secure_webroot(SystemRunner()):
+            ui.hint("Permissions: " + line + ".")
+    except SetupError as e:
+        ui.warn("Could not tighten the permissions of the Apache webroot:")
+        ui.warn(str(e))
 
 # Setup Step 4: DDNS Configuration
 def _04_setup_ddns():
@@ -948,17 +962,9 @@ def directories_match(dir1, dir2):
     if not os.path.isdir(dir1) or not os.path.isdir(dir2):
         raise ValueError("Both inputs must be valid directories.")
 
-    comparison = filecmp.dircmp(dir1, dir2)
-    # Check for files and subdirectories that differ
-    if comparison.left_only or comparison.right_only or comparison.diff_files or comparison.funny_files:
-        return False
-    # Recursively check subdirectories
-    for subdir in comparison.common_dirs:
-        subdir1 = os.path.join(dir1, subdir)
-        subdir2 = os.path.join(dir2, subdir)
-        if not directories_match(subdir1, subdir2):
-            return False
-    return True
+    # Compared as root: the served config.php is not readable by ordinary users.
+    r = subprocess.run(['sudo', 'diff', '-rq', str(dir1), str(dir2)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return r.returncode == 0
 
 # Execute
 if __name__ == "__main__":
