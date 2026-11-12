@@ -446,10 +446,13 @@ class ApacheRenderTests(unittest.TestCase):
         self.assertNotIn('Cf-Access', conf)
 
     def test_access_block(self):
-        conf = apache.render_allowed_hosts_conf([HOST], tunnel_hostname=HOST, access_enabled=True, origin_bind='127.0.0.1', origin_port=8080)
+        conf = apache.render_allowed_hosts_conf([HOST], tunnel_hostname=HOST, access_enabled=True)
         self.assertIn("-z req('Cf-Access-Jwt-Assertion')", conf)
         self.assertIn(r"wol\.example\.com", conf)
-        self.assertIn("%{SERVER_ADDR} == '127.0.0.1' && %{SERVER_PORT} == '8080'", conf)
+        self.assertNotIn('SERVER_ADDR', conf)
+        site = apache.render_tunnel_site('127.0.0.1', 8080, access_enabled=True)
+        self.assertIn("<If \"-z req('Cf-Access-Jwt-Assertion') && %{REQUEST_URI} != '/host_reject.php'\">", site)
+        self.assertNotIn('Cf-Access', apache.render_tunnel_site('127.0.0.1', 8080))
         only_access = apache.render_allowed_hosts_conf([], tunnel_hostname=HOST, access_enabled=True)
         self.assertNotIn('ErrorDocument', only_access)
 

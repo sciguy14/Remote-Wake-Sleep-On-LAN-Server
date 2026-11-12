@@ -287,11 +287,10 @@ class RemoteAccessWizard(object):
         tunnel_on = self.mode == 'tunnel'
         access_on = bool(n['ACCESS_AUD'] and n['ACCESS_TEAM_DOMAIN'])
         if tunnel_on:
-            apache.apply_tunnel_site(ctx, n['TUNNEL_ORIGIN_BIND'], n['TUNNEL_ORIGIN_PORT'])
+            apache.apply_tunnel_site(ctx, n['TUNNEL_ORIGIN_BIND'], n['TUNNEL_ORIGIN_PORT'], access_on)
             st['tunnel']['vhost_installed'] = True
         conf = apache.render_allowed_hosts_conf(
-            n['ALLOWED_HOSTS'], n['ALLOW_LOCALHOST'], n['TUNNEL_HOSTNAME'] if tunnel_on else None, access_on and tunnel_on,
-            n['TUNNEL_ORIGIN_BIND'], n['TUNNEL_ORIGIN_PORT'])
+            n['ALLOWED_HOSTS'], n['ALLOW_LOCALHOST'], n['TUNNEL_HOSTNAME'] if tunnel_on else None, access_on and tunnel_on)
         if apache.apply_allowed_hosts(ctx, conf):
             ui.say('Apache host allowlist ' + ('applied.' if conf else 'removed.'))
         failures = []
