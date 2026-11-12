@@ -88,3 +88,36 @@ def run_auto_updates_step(runner, ui):
     ui.success('Automatic security updates are on%s.' % (' (with automatic restart at %s)' % REBOOT_TIME if auto_reboot else ''))
     ui.hint('Log: /var/log/unattended-upgrades/unattended-upgrades.log')
     return 'enabled'
+
+
+# ----- web root permissions -----
+
+WEB_GROUP = 'www-data'
+
+
+def secure_webroot(runner, www_dir='/var/www', group=WEB_GROUP):
+    """config.php holds the passphrase hash and the list of machines. Make the served copy readable by
+    root and the web server only (it used to be world-readable), and close the timestamped backups of
+    older web roots, which hold older copies of it, to everyone but root. Returns a list of what was done.
+    Safe to repeat. Leaves everything alone when the web server group does not exist."""
+    done = []
+    config = www_dir + '/html/config.php'
+    if runner.run(['getent', 'group', group], check=False, read_only=True).returncode != 0:
+        return done
+    want = 'root:%s 640' % group
+    have = runner.run(['stat', '-c', '%U:%G %a', config], sudo=True, check=False, read_only=True)
+    if have.returncode == 0 and have.stdout.strip() != want:
+        # Group first, then mode: the file is never left unreadable for the web server.
+        runner.run(['chown', 'root:' + group, config], sudo=True)
+        runner.run(['chmod', '640', config], sudo=True)
+        done.append('%s is now readable only by root and the web server' % config)
+    res = runner.run(['find', www_dir, '-maxdepth', '1', '-type', 'd', '-name', 'html_backup_*',
+                      '(', '-perm', '/077', '-o', '!', '-user', 'root', ')'],
+                     sudo=True, check=False, read_only=True)
+    backups = [p for p in (res.stdout or '').splitlines() if p.startswith(www_dir + '/html_backup_')]
+    for path in backups:
+        runner.run(['chown', 'root:root', path], sudo=True)
+        runner.run(['chmod', '700', path], sudo=True)
+    if backups:
+        done.append('%d web root backup folder(s) in %s are now readable only by root' % (len(backups), www_dir))
+    return done

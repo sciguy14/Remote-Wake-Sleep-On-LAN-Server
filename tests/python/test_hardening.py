@@ -66,5 +66,45 @@ class AutoUpdatesTests(unittest.TestCase):
         self.assertNotIn(hardening.PERIODIC_PATH, runner.files)
 
 
+class WebrootPermissionTests(unittest.TestCase):
+    CONFIG = '/var/www/html/config.php'
+
+    def test_config_is_restricted_to_root_and_web_server(self):
+        runner = FakeRunner()
+        runner.files[self.CONFIG] = (b'<?php', None)
+        done = hardening.secure_webroot(runner)
+        argvs = runner.argvs()
+        self.assertLess(argvs.index(['chown', 'root:www-data', self.CONFIG]), argvs.index(['chmod', '640', self.CONFIG]))
+        self.assertEqual(len(done), 1)
+
+    def test_already_restricted_config_is_left_alone(self):
+        runner = FakeRunner()
+        runner.files[self.CONFIG] = (b'<?php', None)
+        runner.stat_out = 'root:www-data 640'
+        self.assertEqual(hardening.secure_webroot(runner), [])
+        self.assertEqual(runner.mutations, [])
+
+    def test_backups_are_closed_to_other_users(self):
+        runner = FakeRunner()
+        runner.files[self.CONFIG] = (b'<?php', None)
+        runner.found = ['/var/www/html_backup_2024-01-01_10-00', '/var/www/html_backup_2024-02-01_10-00', '/etc/passwd']
+        done = hardening.secure_webroot(runner)
+        self.assertIn(['chmod', '700', '/var/www/html_backup_2024-01-01_10-00'], runner.argvs())
+        self.assertIn(['chmod', '700', '/var/www/html_backup_2024-02-01_10-00'], runner.argvs())
+        self.assertIn(['chown', 'root:root', '/var/www/html_backup_2024-02-01_10-00'], runner.argvs())
+        self.assertNotIn(['chmod', '700', '/etc/passwd'], runner.argvs())
+        self.assertIn('2 web root backup folder(s)', done[1])
+
+    def test_nothing_happens_without_the_web_server_group_or_config(self):
+        runner = FakeRunner()
+        runner.files[self.CONFIG] = (b'<?php', None)
+        runner.groups = set()
+        self.assertEqual(hardening.secure_webroot(runner), [])
+        self.assertEqual(runner.mutations, [])
+        runner = FakeRunner()
+        self.assertEqual(hardening.secure_webroot(runner), [])
+        self.assertEqual(runner.mutations, [])
+
+
 if __name__ == '__main__':
     unittest.main()
