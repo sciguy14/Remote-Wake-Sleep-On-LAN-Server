@@ -58,4 +58,32 @@ $COMPUTER_SLEEP_CMD = "suspend";
 $BOOTSTRAP_LOCATION_PREFIX = "";
 // -------------------------------
 
+// Remote access / security (optional)
+// The setup wizard normally fills these in. Leaving them unset (or deleting them) keeps the previous behavior.
+// -------------------------------
+
+// Exact host names this server answers to, e.g. array("wol.example.com", "raspberrypi.local", "192.168.1.10").
+// Protects against DNS rebinding (a malicious web page pointing its own domain at your Pi's address).
+// No wildcards or suffix matching; a bare IP must be listed to be accepted. Default = array() (no Host checking).
+$ALLOWED_HOSTS = array();
+
+// When $ALLOWED_HOSTS is in use, also accept localhost, 127.0.0.1 and [::1]. Default = false.
+$ALLOW_LOCALHOST = false;
+
+// Write a rate-limited syslog line (client IP and Host) for each request rejected by $ALLOWED_HOSTS. Default = false.
+$LOG_HOST_REJECTIONS = false;
+
+// Public hostname served through Cloudflare Tunnel, e.g. "wol.example.com". It must also be listed in $ALLOWED_HOSTS. Default = NULL.
+$TUNNEL_HOSTNAME = NULL;
+
+// Loopback Apache listener that cloudflared forwards to. Used only by the setup wizard. Defaults = "127.0.0.1" and 8080.
+$TUNNEL_ORIGIN_BIND = "127.0.0.1";
+$TUNNEL_ORIGIN_PORT = 8080;
+
+// Cloudflare Access: team domain without scheme (e.g. "example.cloudflareaccess.com") and the Access application AUD tag.
+// When both are set, tunnel requests must carry a valid Access token. Setting only one denies all tunnel requests. Defaults = NULL.
+$ACCESS_TEAM_DOMAIN = NULL;
+$ACCESS_AUD = NULL;
+// -------------------------------
+
 ?>
