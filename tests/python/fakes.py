@@ -37,6 +37,18 @@ class FakeRunner(object):
         self.active = set()
         self.machine, self.deb_arch, self.installed = machine, deb_arch, installed
         self.configtest_ok = True
+        self.packages = set()    # installed apt packages (only the ones tests care about)
+        self.apt_ok = True
+
+    def apt_config(self):
+        """`apt-config dump` output derived from the apt.conf.d files written so far."""
+        lines = []
+        for path in sorted(self.files):
+            if path.startswith('/etc/apt/apt.conf.d/'):
+                for ln in self.files[path][0].decode('utf8').splitlines():
+                    if '::' in ln and ln.rstrip().endswith('";') and not ln.lstrip().startswith(('//', '"')):
+                        lines.append(ln.strip())
+        return '\n'.join(lines) + '\n'
 
     @property
     def mutations(self):
@@ -76,6 +88,16 @@ class FakeRunner(object):
         elif argv[:2] == ['apache2ctl', 'configtest']:
             if not self.configtest_ok:
                 rc, out = 1, 'Syntax error'
+        elif argv[:1] == ['dpkg-query']:
+            pkg = argv[-1]
+            rc = 0 if pkg in self.packages else 1
+            out = 'install ok installed' if pkg in self.packages else ''
+        elif argv[:2] == ['apt-config', 'dump']:
+            out = self.apt_config()
+        elif 'apt-get' in argv and 'install' in argv and not self.apt_ok:
+            rc = 100
+        elif 'apt-get' in argv and 'install' in argv:
+            self.packages.add(argv[-1])
         elif argv[:1] == ['tee']:
             self.files[argv[1]] = (input.encode() if isinstance(input, str) else input, None)
         if check and rc != 0:
