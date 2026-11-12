@@ -8,6 +8,8 @@ License: GPL v3 (http://www.gnu.org/licenses/gpl.html)
 
 //You should not need to edit this file. Adjust Parameters in the config file:
 require_once('config.php');
+require_once(__DIR__ . '/includes/request_gate.php');
+rwsols_request_gate_run();
 
 //set headers that harden the HTTPS session
 if ($USE_HTTPS)
@@ -21,7 +23,7 @@ ob_implicit_flush(true);
 ob_end_flush();
 
 //Set the correct protocol
-if ($USE_HTTPS && !$_SERVER['HTTPS'])
+if ($USE_HTTPS && !$RWSOLS_IS_TUNNEL_ORIGIN && !$_SERVER['HTTPS'])
 {
    header("Location: https://$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]");
    exit;
@@ -30,7 +32,7 @@ if ($USE_HTTPS && !$_SERVER['HTTPS'])
 //Set default computer (this is business logic so should be done last)
 if (empty($_GET))
 {
-   header('Location: '. ($USE_HTTPS ? "https://" : "http://") . "$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]" . "?computer=0");
+   header('Location: '. (($USE_HTTPS || $RWSOLS_IS_TUNNEL_ORIGIN) ? "https://" : "http://") . "$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]" . "?computer=0");
    exit;
 }
 else
