@@ -105,6 +105,13 @@ class BaseUI(object):
     def info(self, text=''):
         self._print(text, 'accent')
 
+    def link(self, url):
+        """A URL on a line of its own, never broken up by the UI, so it can be clicked or copied whole."""
+        self._print_link(url)
+
+    def _print_link(self, url):
+        self._print(url, 'accent')
+
     def hint(self, text=''):
         self._print(text, 'hint')
 
@@ -409,6 +416,10 @@ class RichUI(BaseUI):
 
     def _print(self, text='', style=None):
         self.console.print(self._t(text, style))
+
+    def _print_link(self, url):
+        # soft_wrap: rich inserts no line breaks, so the terminal wraps the URL itself and it stays one link.
+        self.console.print(self._t(url, 'accent'), soft_wrap=True)
 
     def _heading(self, title):
         self.console.print()

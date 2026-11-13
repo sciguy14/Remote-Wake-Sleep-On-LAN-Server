@@ -319,7 +319,7 @@ class ScriptedUI(object):
     def say(self, text=''):
         self.out.append(text)
 
-    warn = error = success = info = hint = heading = say
+    warn = error = success = info = hint = heading = link = say
 
     def pause(self, text=''):
         self.out.append(text)
