@@ -37,6 +37,8 @@ def default_mode(repo_dir):
     st = load_state(os.path.join(repo_dir, '.rwsols_remote_access.json'))
     if st and st.get('mode') in MODES:
         return st['mode']
+    if st and 'sections' in st:
+        return 'none'      # the setup checklist has run and no mode was chosen yet: a new install
     if os.path.exists(os.path.join(repo_dir, 'www', 'html', 'config.php')) or \
             os.path.exists(os.path.join(repo_dir, '._04_setup_ddns')):
         return 'port_forward'

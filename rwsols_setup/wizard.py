@@ -258,7 +258,31 @@ class RemoteAccessWizard(object):
 
     # ----- planning (questions only; no side effects) -----
 
-    def plan(self):
+    def plan(self, parts=('mode', 'allowlist')):
+        """Ask the questions. `parts` picks which: 'mode' (tunnel and Access, or removing an old tunnel) and
+        'allowlist'. The setup checklist asks them as two separate sections; --remote-access asks both."""
+        if 'mode' in parts:
+            self._plan_mode()
+        if 'allowlist' in parts:
+            self._plan_allowlist()
+        else:
+            self._keep_tunnel_host_allowed()
+
+    def _keep_tunnel_host_allowed(self):
+        """With the allowlist on, the tunnel hostname has to be on it. Keep that true when the tunnel section
+        runs without the allowlist question."""
+        hosts = list(self.new['ALLOWED_HOSTS'] or [])
+        if not hosts:
+            return
+        old, host = self.cur['TUNNEL_HOSTNAME'], self.new['TUNNEL_HOSTNAME']
+        if old and old != host and old in hosts:
+            hosts.remove(old)
+        if self.mode == 'tunnel' and host and host not in hosts:
+            hosts.insert(0, host)
+            self.ui.say('Added %s to the hostname allowlist (the tunnel needs it there).' % host)
+        self.new['ALLOWED_HOSTS'] = hosts
+
+    def _plan_mode(self):
         prev_tunnel = bool(self.st.get('tunnel', {}).get('hostname') or self.cur['TUNNEL_HOSTNAME'])
         if self.mode != 'tunnel' and prev_tunnel:
             self.ui.say('')
@@ -270,7 +294,6 @@ class RemoteAccessWizard(object):
         if self.mode == 'tunnel':
             self._plan_tunnel()
             self._plan_access()
-        self._plan_allowlist()
 
     def _plan_tunnel(self):
         ui = self.ui
@@ -449,6 +472,8 @@ class RemoteAccessWizard(object):
         rdns = self._reverse_dns_candidate()
         if rdns:
             add(rdns, "your router's local DNS name for this Pi (reverse lookup of %s)" % self.lan_ip, True)
+        for name in (self.st.get('https') or {}).get('names') or []:
+            add(name, 'the name on your LAN certificate', True)
         for name in self._search_domain_candidates():
             add(name, "this Pi's name in your network's DNS search domain (resolves to %s)" % self.lan_ip, True)
         if self.lan_ip:
@@ -692,7 +717,9 @@ class RemoteAccessWizard(object):
             keys = ', '.join('$' + k for k in updates)
             self.ctx.did('config.php updated: ' + keys, 'update config.php: ' + keys)
 
-    def apply_local(self):
+    def apply_local(self, service=True):
+        """Apply to Apache and, with `service`, (re)install the cloudflared service. `service=False` is for runs
+        that only changed the allowlist: the tunnel service and its token are left as they are."""
         ctx, ui, st = self.ctx, self.ui, self.st
         n = self.new
         tunnel_on = self.mode == 'tunnel'
@@ -706,7 +733,7 @@ class RemoteAccessWizard(object):
             ctx.did('Apache host allowlist ' + ('applied.' if conf else 'removed.'),
                     ('apply' if conf else 'remove') + ' the Apache host allowlist.')
         failures = []
-        if tunnel_on:
+        if tunnel_on and service:
             tunnel.install_cloudflared(ctx, st)
             if not self.tunnel_token:
                 if ctx.dry_run:
@@ -722,6 +749,7 @@ class RemoteAccessWizard(object):
             if results:
                 ui.checklist('Verifying the tunnel', results)
             failures = [label for label, ok, detail in results if not ok]
+        st = self.st = self._merge_outside_changes(st)
         st['mode'] = self.mode
         st['access'].update(enabled=access_on)
         st['allowlist'] = {'enabled': bool(n['ALLOWED_HOSTS'])}
@@ -729,6 +757,15 @@ class RemoteAccessWizard(object):
         self._final_notes(failures)
         self.tunnel_token = None
         self._api = None
+
+    def _merge_outside_changes(self, st):
+        """Keys this wizard does not own (the setup checklist's progress, DDNS and HTTPS choices) may have been
+        written to the state file after this wizard loaded it. Keep the file's version of those."""
+        on_disk = load_state(self.ctx.state_path) or {}
+        for k, v in on_disk.items():
+            if k not in ('version', 'mode', 'tunnel', 'access', 'allowlist'):
+                st[k] = v
+        return st
 
     def _final_notes(self, failures):
         ui = self.ui
