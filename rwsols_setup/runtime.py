@@ -91,9 +91,16 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+USER_AGENT = 'rwsols-setup'
+
+
 class UrllibTransport(object):
     def request(self, method, url, headers=None, body=None, timeout=20, follow_redirects=True):
-        req = urllib.request.Request(url, data=body, method=method, headers=headers or {})
+        # Always name ourselves: Cloudflare (pkg.cloudflare.com) answers urllib's default User-Agent with HTTP 403.
+        headers = dict(headers or {})
+        if not any(k.lower() == 'user-agent' for k in headers):
+            headers['User-Agent'] = USER_AGENT
+        req = urllib.request.Request(url, data=body, method=method, headers=headers)
         handlers = [] if follow_redirects else [_NoRedirect()]
         opener = urllib.request.build_opener(*handlers)
         try:
