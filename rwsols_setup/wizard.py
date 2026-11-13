@@ -689,7 +689,8 @@ class RemoteAccessWizard(object):
             updates['TUNNEL_HOSTNAME'] = self.new['TUNNEL_HOSTNAME']
         if updates:
             self.cfg.update(updates)
-            self.ui.say('config.php updated: ' + ', '.join('$' + k for k in updates))
+            keys = ', '.join('$' + k for k in updates)
+            self.ctx.did('config.php updated: ' + keys, 'update config.php: ' + keys)
 
     def apply_local(self):
         ctx, ui, st = self.ctx, self.ui, self.st
@@ -702,7 +703,8 @@ class RemoteAccessWizard(object):
         conf = apache.render_allowed_hosts_conf(
             n['ALLOWED_HOSTS'], n['ALLOW_LOCALHOST'], n['TUNNEL_HOSTNAME'] if tunnel_on else None, access_on and tunnel_on)
         if apache.apply_allowed_hosts(ctx, conf):
-            ui.say('Apache host allowlist ' + ('applied.' if conf else 'removed.'))
+            ctx.did('Apache host allowlist ' + ('applied.' if conf else 'removed.'),
+                    ('apply' if conf else 'remove') + ' the Apache host allowlist.')
         failures = []
         if tunnel_on:
             tunnel.install_cloudflared(ctx, st)
@@ -730,22 +732,27 @@ class RemoteAccessWizard(object):
 
     def _final_notes(self, failures):
         ui = self.ui
+        dry = self.ctx.dry_run
         if self.service_token:
             access.show_service_token_once(ui, self.service_token)
         lines, warnings = [], []
+        if dry:
+            lines.append('This was a dry run. Nothing was changed on this Pi or in your Cloudflare account. '
+                         'Run the same command without --dry-run to apply it.')
         if self.mode == 'tunnel':
-            lines.append('Cloudflare Tunnel is set up: https://%s' % self.new['TUNNEL_HOSTNAME'])
-            warnings.append('Remove any router port forwards (80/443) that point at RWSOLS; they are no longer needed.')
+            lines.append('Cloudflare Tunnel %s: https://%s' % ('would be set up at' if dry else 'is set up', self.new['TUNNEL_HOSTNAME']))
+            warnings.append('Remove any router port forwards (80/443) that point at RWSOLS; they are no longer needed.'
+                            if not dry else 'After a real run, remove any router port forwards (80/443) that point at RWSOLS.')
             if self.ctx.runner.path_exists('/etc/apache2/sites-enabled/000-default-le-ssl.conf'):
                 warnings.append('A Let\'s Encrypt certificate issued via certbot --apache renews over HTTP-01 on port 80, which will stop '
                                 'working once port 80 is closed. Switch to a DNS-01 challenge (e.g. a certbot DNS plugin) or use a self-signed LAN certificate.')
             if failures:
                 warnings.append('Some checks failed: ' + '; '.join(failures))
         if self.new['ALLOWED_HOSTS']:
-            lines.append('Allowed hosts: ' + ', '.join(self.new['ALLOWED_HOSTS']))
+            lines.append(('Allowed hosts would be: ' if dry else 'Allowed hosts: ') + ', '.join(self.new['ALLOWED_HOSTS']))
             lines.append('TLS note: Apache still completes the TLS handshake for unlisted SNI names; the allowlist rejects them at the HTTP layer.')
         if lines or warnings:
-            ui.summary('Remote access summary', lines, warnings)
+            ui.summary('Remote access summary (dry run, nothing changed)' if dry else 'Remote access summary', lines, warnings)
 
     # ----- removal -----
 
@@ -771,7 +778,11 @@ class RemoteAccessWizard(object):
         else:
             lines.append('Cleared tunnel/Access keys in config.php (re-run setup to copy it to the webroot)')
         apache.apply_allowed_hosts(ctx, apache.render_allowed_hosts_conf(hosts, self.cur['ALLOW_LOCALHOST']))
-        ui.explain('Tunnel removal', ['- ' + ln for ln in lines])
+        if ctx.dry_run:
+            ui.explain('Tunnel removal (dry run, nothing changed)',
+                       ['A real run would report:'] + ['- ' + ln for ln in lines])
+        else:
+            ui.explain('Tunnel removal', ['- ' + ln for ln in lines])
         if ctx.runner.run(['which', 'cloudflared'], check=False, read_only=True).returncode == 0 and \
                 ui.confirm('Also uninstall the cloudflared package?', False):
             ctx.runner.run(['apt-get', 'remove', '-y', 'cloudflared'], sudo=True)

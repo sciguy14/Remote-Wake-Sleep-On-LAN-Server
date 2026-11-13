@@ -80,7 +80,7 @@ def install_cloudflared(ctx, st):
     if ctx.runner.run(['which', 'cloudflared'], check=False, read_only=True).returncode == 0:
         ctx.ui.say('cloudflared is already installed.')
         return False
-    ctx.ui.say('Installing cloudflared from Cloudflare\'s apt repository...')
+    ctx.did('Installing cloudflared from Cloudflare\'s apt repository...', 'install cloudflared from Cloudflare\'s apt repository:')
     key = ctx.http.request('GET', KEYRING_URL)
     if key.status != 200 or not key.body:
         raise SetupError('Could not download the Cloudflare package signing key (HTTP %d).' % key.status)
@@ -194,7 +194,7 @@ class CloudProvisioner(object):
             res = self.api.mutate('POST', base, {'name': self.name, 'config_src': 'cloudflare'}, {'id': PLACEHOLDER_ID})
             self.tunnel_id = res['id']
             created = True
-            self.ctx.ui.say('Created tunnel %r.' % self.name)
+            self.ctx.did('Created tunnel %r.' % self.name, 'create tunnel %r.' % self.name)
         self.t.update({'id': self.tunnel_id, 'name': self.name, 'account_id': self.account_id,
                        'zone_id': self.zone_id, 'created_tunnel': bool(created)})
         save_state(self.ctx, self.st)
@@ -228,7 +228,8 @@ class CloudProvisioner(object):
             return
         new_cfg = dict(cfg, ingress=new_rules)
         self.api.mutate('PUT', path, {'config': new_cfg}, {})
-        self.ctx.ui.say('Set tunnel ingress: %s -> %s' % (self.hostname, self.origin_service))
+        self.ctx.did('Set tunnel ingress: %s -> %s' % (self.hostname, self.origin_service),
+                     'set tunnel ingress: %s -> %s' % (self.hostname, self.origin_service))
 
     def ensure_dns(self):
         want = '%s.cfargotunnel.com' % self.tunnel_id
@@ -260,7 +261,8 @@ class CloudProvisioner(object):
                                                  'ttl': 1, 'comment': DNS_COMMENT}, {'id': '<new-record-id>'})
             self.t['dns_record_id'] = res['id']
             self.t['dns_created'] = True
-            self.ctx.ui.say('Created proxied CNAME %s -> %s' % (self.hostname, want))
+            self.ctx.did('Created proxied CNAME %s -> %s' % (self.hostname, want),
+                         'create proxied CNAME %s -> %s' % (self.hostname, want))
         self.t['dns_content'] = want
         save_state(self.ctx, self.st)
 
