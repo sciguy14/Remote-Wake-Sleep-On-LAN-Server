@@ -8,7 +8,8 @@ from rwsols_setup import dnscheck, wizard
 from rwsols_setup.runtime import HttpResponse
 
 DDCLIENT = '/etc/ddclient.conf'
-SKIP = 'Skipping the Cloudflare Tunnel and Cloudflare Access options.'
+SKIP = wizard.NOT_AVAILABLE
+OUTSIDE = (wizard.WHERE_QUERY, 2)
 
 
 def ddclient(*names):
@@ -91,8 +92,10 @@ class ModeGateTests(unittest.TestCase):
     def test_ddclient_domain_on_cloudflare_offers_tunnel_without_asking(self):
         env = self.env(names=['home.example.com'])
         wizard.choose_mode(env.ctx)
-        self.assertEqual(len(self.labels()), 3)
+        self.assertEqual(self.labels(), wizard.METHOD_OPTIONS)
         text = env.ui.text()
+        self.assertLess(text.index(wizard.WHERE_QUERY), text.index('Checking your domain'))
+        self.assertLess(text.index('Cloudflare Tunnel is available.'), text.index(wizard.METHOD_QUERY))
         self.assertIn('DNS for example.com is managed by Cloudflare. Cloudflare Tunnel is available.', text)
         self.assertNotIn('Your domain, e.g. example.com', text)
         self.assertNotIn(SKIP, text)
@@ -102,19 +105,20 @@ class ModeGateTests(unittest.TestCase):
         env = self.env(names=['home.example.com'])
         wizard.choose_mode(env.ctx)
         text = env.ui.text()
-        self.assertIn('only work with a domain whose DNS is managed by Cloudflare', text)
+        self.assertIn('only works with a domain whose DNS is managed by Cloudflare', text)
         self.assertIn('the dynamic DNS feature of your router', text)
 
     def test_ddclient_domain_elsewhere_and_no_other_domain_hides_tunnel_and_says_why(self):
         env = self.env(names=['pi.elsewhere.example.net'])
         self.assertEqual(wizard.choose_mode(env.ctx), 'port_forward')
-        self.assertEqual(self.labels(), [wizard.MODE_LABELS['none'], wizard.MODE_LABELS['port_forward']])
         text = env.ui.text()
+        self.assertNotIn(wizard.METHOD_QUERY, text)   # only one way is possible, so it is explained, not asked
+        self.assertIn('Outside access will use port forwarding', text)
         self.assertIn(SKIP + ' DNS for elsewhere.example.net is not managed by Cloudflare', text)
         self.assertIn('python3 setup.py --remote-access', text)
 
     def test_user_can_name_a_cloudflare_domain_updated_some_other_way(self):
-        env = self.env([('Your domain, e.g. example.com', 'example.com'), ('Choose a remote access mode', 3)],
+        env = self.env([('Your domain, e.g. example.com', 'example.com'), (wizard.METHOD_QUERY, 1)],
                        names=['pi.elsewhere.example.net'])
         self.assertEqual(wizard.choose_mode(env.ctx), 'tunnel')
         self.assertEqual(env.ctx.cloudflare_base, 'example.com')
@@ -123,46 +127,50 @@ class ModeGateTests(unittest.TestCase):
         self.assertEqual(w.new['TUNNEL_HOSTNAME'], 'rwsols.example.com')
 
     def test_wrong_domain_is_reasked_until_blank(self):
-        env = self.env([('Your domain, e.g. example.com', ['elsewhere.example.net', 'nothing-here.example.org', ''])])
+        env = self.env([OUTSIDE, ('Your domain, e.g. example.com', ['elsewhere.example.net', 'nothing-here.example.org', ''])])
         os.remove(env.config_path)
         self.assertEqual(wizard.choose_mode(env.ctx), 'port_forward')
-        self.assertEqual(len(self.labels()), 2)
+        self.assertNotIn(wizard.METHOD_QUERY, env.ui.text())
         self.assertIn('This domain works with port forwarding.', env.ui.text())
         text = env.ui.text()
         self.assertIn('nothing-here.example.org does not appear to be a registered domain', text)
         self.assertIn(SKIP, text)
 
     def fresh(self, rules):
-        env = self.env(rules)
+        env = self.env(list(rules))
         os.remove(env.config_path)
         return env
 
     def test_fresh_install_is_asked_what_kind_of_address_it_has_first(self):
-        env = self.fresh([('Your domain, e.g. example.com', 'example.com')])
+        env = self.fresh([OUTSIDE, ('Your domain, e.g. example.com', 'example.com')])
         self.assertEqual(wizard.choose_mode(env.ctx), 'tunnel')   # own domain on Cloudflare: the tunnel is the default
         text = env.ui.text()
-        self.assertLess(text.index(wizard.ADDRESS_QUERY), text.index('Is Cloudflare an option for you?'))
+        self.assertLess(text.index(wizard.WHERE_QUERY), text.index(wizard.ADDRESS_QUERY))
+        self.assertLess(text.index(wizard.ADDRESS_QUERY), text.index('Checking your domain'))
+        self.assertLess(text.index('Checking your domain'), text.index(wizard.METHOD_QUERY))
+        self.assertNotIn('Cloudflare', text.split(wizard.WHERE_QUERY)[0])   # the first step is only about home versus outside
         self.assertIn('Checking who manages DNS for example.com ...', text)
         self.assertIn('DNS for example.com is managed by Cloudflare. Cloudflare Tunnel is available.', text)
-        self.assertEqual(self.offered[0], wizard.ADDRESS_OPTIONS)
+        self.assertEqual(self.offered, [wizard.WHERE_OPTIONS, wizard.ADDRESS_OPTIONS, wizard.METHOD_OPTIONS])
 
     def test_free_dynamic_dns_name_means_port_forwarding_and_no_cloudflare_questions(self):
-        env = self.fresh([(wizard.ADDRESS_QUERY, 2)])
+        env = self.fresh([OUTSIDE, (wizard.ADDRESS_QUERY, 2)])
         self.assertEqual(wizard.choose_mode(env.ctx), 'port_forward')
-        self.assertEqual(self.labels(), [wizard.MODE_LABELS['none'], wizard.MODE_LABELS['port_forward']])
+        self.assertEqual(self.offered, [wizard.WHERE_OPTIONS, wizard.ADDRESS_OPTIONS])
         text = env.ui.text()
+        self.assertIn('This works with any address, including a free dynamic DNS name.', text)
         self.assertIn(SKIP + ' A free dynamic DNS name belongs to its provider', text)
         self.assertIn('you need a domain of your own', text)
         self.assertNotIn('Your domain, e.g. example.com', text)
-        self.assertNotIn('Is Cloudflare an option for you?', text)
+        self.assertNotIn('Checking your domain', text)
 
     def test_home_only_skips_every_other_question(self):
-        env = self.fresh([(wizard.ADDRESS_QUERY, 3)])
-        self.assertEqual(wizard.choose_mode(env.ctx), 'none')
-        self.assertEqual(len(self.offered), 1)
+        env = self.fresh([])
+        self.assertEqual(wizard.choose_mode(env.ctx), 'none')   # a fresh install defaults to home only
+        self.assertEqual(self.offered, [wizard.WHERE_OPTIONS])
         text = env.ui.text()
-        self.assertNotIn(SKIP, text)
-        self.assertNotIn('Choose a remote access mode', text)
+        for word in ('Cloudflare', 'domain of your own', 'Port forwarding'):
+            self.assertNotIn(word, text)
 
     def test_known_dynamic_dns_names_skip_the_address_question(self):
         env = self.env(names=['home.example.com'])
@@ -171,18 +179,17 @@ class ModeGateTests(unittest.TestCase):
 
     def test_no_domain_at_all(self):
         env = self.env()
-        wizard.choose_mode(env.ctx)
-        self.assertEqual(len(self.labels()), 2)
+        self.assertEqual(wizard.choose_mode(env.ctx), 'port_forward')
         self.assertIn(SKIP + ' You did not name a domain whose DNS is managed by Cloudflare.', env.ui.text())
 
     def test_failed_lookup_keeps_the_option(self):
         env = self.env(names=['home.example.com'])
         env.cf.ns = None
         wizard.choose_mode(env.ctx)
-        self.assertEqual(len(self.labels()), 3)
+        self.assertEqual(self.labels(), wizard.METHOD_OPTIONS)
         text = env.ui.text()
         self.assertIn('Could not check who manages DNS for home.example.com', text)
-        self.assertIn('shown anyway', text)
+        self.assertIn('offered anyway', text)
         self.assertNotIn(SKIP, text)
 
     def test_existing_tunnel_install_is_never_stranded(self):
@@ -190,7 +197,7 @@ class ModeGateTests(unittest.TestCase):
         with open(env.ctx.state_path, 'w') as f:
             json.dump({'mode': 'tunnel', 'tunnel': {'hostname': 'rwsols.elsewhere.example.net'}}, f)
         self.assertEqual(wizard.choose_mode(env.ctx), 'tunnel')
-        self.assertEqual(len(self.labels()), 3)
+        self.assertEqual(self.labels(), wizard.METHOD_OPTIONS)
 
     def test_tunnel_hostname_must_be_in_a_cloudflare_zone(self):
         env = self.env([('Public hostname', ['rwsols.elsewhere.example.net', 'rwsols.example.com'])])
