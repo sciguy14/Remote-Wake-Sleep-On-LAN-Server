@@ -597,7 +597,7 @@ class MiscTests(unittest.TestCase):
         self.assertEqual(state.default_mode(d), 'tunnel')
 
     def test_choose_mode_defaults(self):
-        env = Env()
+        env = Env([(wizard.DOMAIN_QUERY, 'elsewhere.example.net')])
         self.addCleanup(env.cleanup)
         self.assertEqual(wizard.choose_mode(env.ctx), 'port_forward')  # config.php exists => existing install
         os.remove(env.config_path)
