@@ -122,12 +122,16 @@ def cloudflare_availability(ctx, current_mode=None):
         'nameservers point at Cloudflare. The free Cloudflare plan is enough, and the domain can be registered anywhere.',
         'How the domain\'s IP address is kept up to date does not matter. ddclient on this Pi, the dynamic DNS feature of your '
         'router, another service, or nothing at all: the tunnel does not use your home IP, so all of these work.',
-        'The check below asks a public DNS server who hosts the domain. It needs no Cloudflare login.'])
+        'The check below asks a public DNS server who hosts the domain. It needs no Cloudflare login.',
+        'A domain here means the name you registered, such as example.com. RWSOLS does not take it over: in the tunnel step '
+        'you pick one address on it, normally a subdomain such as rwsols.example.com, and only that address is used. '
+        'The domain itself and its other subdomains stay free for dynamic DNS, a website or other services.'])
     failed = []
     unknown = False
     seen = set()
 
     def check(name):
+        ui.say('Checking who manages DNS for %s ...' % name)
         c = dnscheck.check_domain(ctx.http, name)
         key = c.zone or c.name
         if key in seen:
@@ -154,7 +158,7 @@ def cloudflare_availability(ctx, current_mode=None):
             ui.say('Your dynamic DNS names (%s) are not on Cloudflare. If you have another domain that is, enter it here.'
                    % ', '.join(ddns))
         while True:
-            name = ui.ask('Domain to use with Cloudflare, e.g. example.com (leave blank if you have none)', None,
+            name = ui.ask('Your domain, e.g. example.com (leave blank if you have none on Cloudflare)', None,
                           validator=_optional_domain)
             if not name:
                 break
@@ -332,7 +336,8 @@ class RemoteAccessWizard(object):
             except ValueError:
                 default_host = None
         lines = [
-            'A dedicated subdomain (e.g. rwsols.example.com) is recommended over the bare domain (example.com).',
+            'This is the one address you will type to reach RWSOLS from outside your home. A dedicated subdomain of your '
+            'domain (e.g. rwsols.example.com) is recommended over the bare domain (example.com).',
             'The tunnel takes over that name\'s DNS record (a proxied CNAME to Cloudflare). On its own name, RWSOLS leaves the '
             'bare domain free for dynamic DNS or a website, and you can add other tunnelled services later, each on its own name '
             '(e.g. nas.example.com).',
@@ -350,6 +355,11 @@ class RemoteAccessWizard(object):
                 raise ValueError(dnscheck.describe(c) + ' Use a name in a domain that is on Cloudflare.')
             return h
         h = ui.ask('Public hostname for RWSOLS (e.g. rwsols.example.com)', default_host, validator=on_cloudflare)
+        c = dnscheck.check_domain(self.ctx.http, h)
+        if c.status == 'cloudflare':
+            ui.success('Checked: %s' % dnscheck.describe(c))
+        elif c.status == 'unknown':
+            ui.warn(dnscheck.describe(c) + ' Continuing; the tunnel setup stops with an error if the domain is not on Cloudflare.')
         self.new['TUNNEL_HOSTNAME'] = h
         if tunnel.ddns_overlap(h, '\n'.join([', '.join(ddns_names)])):
             ui.warn('%s is also in your ddclient host list. The tunnel owns that DNS record (a proxied CNAME); '
