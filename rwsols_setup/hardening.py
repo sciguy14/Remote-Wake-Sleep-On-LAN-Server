@@ -14,6 +14,7 @@ PERIODIC_CONF = ('APT::Periodic::Update-Package-Lists "1";\n'
 EXTRA_PATH = '/etc/apt/apt.conf.d/52rwsols-auto-updates'
 TIMERS = ('apt-daily.timer', 'apt-daily-upgrade.timer')
 REBOOT_TIME = '04:00'
+CLOUDFLARED_ORIGIN = 'origin=cloudflared,label=cloudflared'
 
 
 def render_extra_conf(auto_reboot=False):
@@ -25,6 +26,8 @@ def render_extra_conf(auto_reboot=False):
         'Unattended-Upgrade::Origins-Pattern {',
         '        "origin=Raspberry Pi Foundation,codename=${distro_codename},label=Raspberry Pi Foundation";',
         '        "origin=Raspbian,codename=${distro_codename},label=Raspbian";',
+        '        // cloudflared (Cloudflare Tunnel), when it was installed from the Cloudflare apt repository',
+        '        "' + CLOUDFLARED_ORIGIN + '";',
         '};',
     ]
     if auto_reboot:
@@ -64,16 +67,34 @@ def enable_auto_updates(runner, auto_reboot=False):
         raise SetupError('Automatic updates were configured, but apt does not report them as enabled.')
 
 
+def refresh_extra_conf(runner):
+    """Bring a file written by an earlier version of this script up to date (it gained the cloudflared
+    source), keeping the reboot choice. Only touches the file this script wrote, and only when automatic
+    updates are on. Returns True when the file was rewritten."""
+    old = runner.read_file(EXTRA_PATH)
+    if not old:
+        return False
+    old = old.decode('utf8', 'replace')
+    new = render_extra_conf('Unattended-Upgrade::Automatic-Reboot "true"' in old)
+    if old == new or not auto_updates_status(runner)['enabled']:
+        return False
+    runner.write_file(EXTRA_PATH, new, '0644')
+    return True
+
+
 def run_auto_updates_step(runner, ui):
     """Explain, ask, and enable. Returns 'already', 'enabled' or 'declined'. Raises SetupError on failure."""
     if auto_updates_status(runner)['enabled']:
+        if refresh_extra_conf(runner):
+            ui.say('Updated the list of package sources covered by automatic updates.')
         ui.say('Automatic security updates are already enabled. Nothing to change.')
         return 'already'
     ui.explain('Automatic security updates', [
         'RWSOLS is a web server that can be reached from your network, and possibly from the internet. Security '
         'fixes for Apache, PHP, OpenSSL and the operating system only help once they are installed.',
         'This installs Debian\'s "unattended-upgrades" package and lets it install security updates once a day, '
-        'including updates from the Raspberry Pi package archive. Nothing else on the Pi is changed.',
+        'including updates from the Raspberry Pi package archive, and of cloudflared if you use a Cloudflare Tunnel. '
+        'Nothing else on the Pi is changed.',
         'To undo it later: delete %s and %s.' % (PERIODIC_PATH, EXTRA_PATH)])
     if not ui.confirm('Install security updates automatically?', True):
         ui.hint('Skipped. Keep the Pi up to date yourself with: sudo apt update && sudo apt full-upgrade')

@@ -11,6 +11,21 @@ class AutoUpdatesTests(unittest.TestCase):
         self.assertEqual(hardening.auto_updates_status(FakeRunner()),
                          {'installed': False, 'enabled': False, 'auto_reboot': False})
 
+    def test_older_config_gains_cloudflared_and_keeps_the_reboot_choice(self):
+        runner = FakeRunner()
+        ui = ScriptedUI([('Install security updates automatically', True), ('Restart automatically', True)])
+        hardening.run_auto_updates_step(runner, ui)
+        current = runner.files[hardening.EXTRA_PATH][0].decode()
+        old = ''.join(l + chr(10) for l in current.splitlines() if 'cloudflared' not in l)
+        runner.files[hardening.EXTRA_PATH] = (old.encode(), '0644')
+        ui2 = ScriptedUI()
+        self.assertEqual(hardening.run_auto_updates_step(runner, ui2), 'already')
+        self.assertEqual(runner.files[hardening.EXTRA_PATH][0].decode(), current)
+        self.assertIn('Automatic-Reboot "true"', current)
+        self.assertIn('Updated the list of package sources', ui2.text())
+        self.assertFalse(hardening.refresh_extra_conf(runner))          # nothing to do the second time
+        self.assertFalse(hardening.refresh_extra_conf(FakeRunner()))    # never creates the file by itself
+
     def test_installed_but_not_switched_on_is_not_enabled(self):
         runner = FakeRunner()
         runner.packages.add('unattended-upgrades')
@@ -27,6 +42,7 @@ class AutoUpdatesTests(unittest.TestCase):
         extra = runner.files[hardening.EXTRA_PATH][0].decode()
         self.assertIn('origin=Raspberry Pi Foundation,codename=${distro_codename}', extra)
         self.assertIn('origin=Raspbian,codename=${distro_codename}', extra)
+        self.assertIn('"origin=cloudflared,label=cloudflared";', extra)
         self.assertNotIn('Automatic-Reboot', extra)
         for timer in hardening.TIMERS:
             self.assertIn(['systemctl', 'enable', '--now', timer], runner.argvs())

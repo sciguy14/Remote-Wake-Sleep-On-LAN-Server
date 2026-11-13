@@ -120,6 +120,14 @@ def main():
         'updates': section_updates,
         'config': section_config,
     }
+    # Keep a configuration file written by an earlier version of this script current (no questions asked)
+    try:
+        from rwsols_setup import hardening
+        if hardening.refresh_extra_conf(ctx.runner):
+            ui.hint("Automatic security updates now also cover cloudflared (Cloudflare Tunnel).")
+    except SetupError:
+        pass
+
     if not sections.run(ctx, runners, lambda: wizard.ddclient_hosts(ctx.runner)):
         sys.exit(1)
 

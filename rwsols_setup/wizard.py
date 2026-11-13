@@ -3,7 +3,7 @@ import json
 import re
 from urllib.parse import quote
 
-from . import access, apache, dnscheck, tunnel
+from . import access, apache, dnscheck, hardening, tunnel
 from .cloudflare_api import CloudflareAPI
 from .errors import SetupError
 from .hosts import validate_hostname
@@ -757,6 +757,11 @@ class RemoteAccessWizard(object):
         failures = []
         if tunnel_on and service:
             tunnel.install_cloudflared(ctx, st)
+            try:
+                if hardening.refresh_extra_conf(ctx.runner):
+                    ui.say('Automatic security updates now also cover cloudflared.')
+            except SetupError:
+                pass    # not worth stopping the tunnel setup for; the Security updates section does it too
             if not self.tunnel_token:
                 if ctx.dry_run:
                     ui.say('[dry-run] would install the tunnel token service (token not fetched in dry-run).')
