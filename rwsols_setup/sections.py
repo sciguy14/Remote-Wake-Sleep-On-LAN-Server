@@ -24,6 +24,7 @@ MODE_NAMES = {'none': 'LAN only', 'port_forward': 'port forwarding', 'tunnel': '
 LEGACY_DOT_FILES = ('._01_install_prereqs', '._02_ping_permissions', '._09_secure_php')
 MENU_QUERY = 'What would you like to do?'
 REDO_QUERY = 'Which section do you want to run again?'
+RESET_OPTION = 'Start over: reset all settings to the defaults and set everything up again'
 LE_SITE = '/etc/apache2/sites-enabled/000-default-le-ssl.conf'
 DEFAULT_SITE = '/etc/apache2/sites-available/000-default.conf'
 SSL_MOD = '/etc/apache2/mods-enabled/ssl.load'
@@ -168,12 +169,24 @@ def run(ctx, runners, ddclient_hosts=lambda: ()):
                 actions.append('left')
             options.append('Run one section again')
             actions.append('redo')
+            options.append(RESET_OPTION)
+            actions.append('reset')
             options.append('Quit' if left else 'Quit (everything is set up)')
             actions.append('quit')
             default = 1 if left else len(options)
             action = actions[ui.choose(MENU_QUERY, options, default)[0] - 1]
             if action == 'quit':
                 return True
+            if action == 'reset':
+                from . import reset
+                from .errors import SetupError
+                try:
+                    if reset.run(ctx, load_state(ctx.state_path)):
+                        first = True       # nothing is set up any more: walk through every section again
+                except (SetupError, OSError) as e:
+                    ui.error('The reset did not finish: %s' % e)
+                    return False
+                continue
             if action == 'left':
                 todo = left
             else:
