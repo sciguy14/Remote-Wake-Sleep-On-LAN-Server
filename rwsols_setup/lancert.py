@@ -25,6 +25,7 @@ TOKEN_SCOPES = ['Zone > DNS > Edit    (restrict it to the one zone)', 'Zone > Zo
 SOURCE_QUERY = 'Which API token should renew the certificate?'
 REUSE_OPTION = 'Use the dynamic DNS token that is already stored on this Pi.'
 PASTE_OPTION = 'Paste a separate DNS-only token.'
+COVER_QUERY = 'What should the certificate cover?'
 MAX_TRIES = 5
 
 
@@ -45,6 +46,37 @@ def lan_name(v):
     if h.endswith('.local'):
         raise ValueError('A .local name cannot get a trusted certificate. Use a name inside a domain you own.')
     return h
+
+
+def wildcard_for(name, zone):
+    """'*.home.example.com' for 'pi.home.example.com'. None when the name has no parent inside the zone."""
+    parent = name.split('.', 1)[1] if '.' in name else ''
+    if not zone or not (parent == zone or parent.endswith('.' + zone)):
+        return None
+    return '*.' + parent
+
+
+def ask_cover(ui, name, zone):
+    """Ask whether the certificate is for the one name or for every name next to it. Returns the wildcard
+    name ('*.home.example.com') or None."""
+    wildcard = wildcard_for(name, zone)
+    if not wildcard:
+        return None
+    parent = wildcard[2:]
+    ui.explain('One name, or every name under %s?' % parent, [
+        'Only this name: the certificate is valid for %s and nothing else. This is all RWSOLS needs.' % name,
+        'Every name (a wildcard certificate): one certificate valid for any name directly under %s, such as nas.%s or '
+        'printer.%s, and for this Pi. Not covered: %s itself, and names two levels down (a.b.%s).'
+        % (parent, parent, parent, parent, parent),
+        'A wildcard only helps other devices if you put it to work. The certificate and its private key stay on this Pi '
+        '(%s, readable only by root). For another device you either copy both files to it, and again after every '
+        'renewal (about every two months), or you run a reverse proxy on this Pi in front of it. This script does '
+        'neither for you.' % LIVE_DIR,
+        'Whoever holds the private key can pose as any name under %s on your network, so copy it only to devices you '
+        'trust.' % parent,
+        'The API token needed is the same either way.'])
+    i, _ = ui.choose(COVER_QUERY, ['Only %s.' % name, 'Every name directly under %s (%s).' % (parent, wildcard)], 1)
+    return wildcard if i == 2 else None
 
 
 def explain(ui):
@@ -127,7 +159,8 @@ def issue(ctx, names, email, token):
     r.write_file(CREDENTIALS_PATH, 'dns_cloudflare_api_token = %s\n' % token, '0600')
     argv = ['certbot', 'certonly', '--dns-cloudflare', '--dns-cloudflare-credentials', CREDENTIALS_PATH,
             '--dns-cloudflare-propagation-seconds', '30', '--cert-name', CERT_NAME, '--non-interactive', '--agree-tos',
-            '--email', email, '--deploy-hook', 'systemctl reload apache2']
+            '--email', email, '--deploy-hook', 'systemctl reload apache2',
+            '--renew-with-new-domains']    # a rerun may change what the certificate covers (one name <-> wildcard)
     for n in names:
         argv += ['-d', n]
     try:
@@ -152,7 +185,10 @@ def cleanup(ctx):
 
 
 def plan(ctx, candidates=(), ddns_token=None):
-    """Ask for the name, the contact email and the token. Returns (names, email, token)."""
+    """Ask for the name, what the certificate covers, the contact email and the token.
+
+    Returns (names, email, token, cert_names). `names` is this Pi's own name. `cert_names` is what the
+    certificate is issued for: the same name, or a wildcard that includes it."""
     ui = ctx.ui
     explain(ui)
     default = None
@@ -164,13 +200,17 @@ def plan(ctx, candidates=(), ddns_token=None):
         except ValueError:
             continue
 
+    zones = {}
+
     def on_cloudflare(v):
         h = lan_name(v)
         chk = dnscheck.check_domain(ctx.http, h)
+        zones[h] = chk.zone if chk.status == 'cloudflare' else None
         if chk.status in ('other', 'missing'):
             raise ValueError(dnscheck.describe(chk) + ' The name must be in a domain whose DNS is hosted at Cloudflare.')
         return h
     name = ui.ask('LAN name for the certificate (e.g. rwsols.home.example.com)', default, validator=on_cloudflare)
+    wildcard = ask_cover(ui, name, zones.get(name))
     ui.hint('Let\'s Encrypt emails this address only if a renewal is about to fail. It is not added to a mailing list.')
 
     def email(v):
@@ -179,4 +219,4 @@ def plan(ctx, candidates=(), ddns_token=None):
             raise ValueError('That does not look like an email address.')
         return v
     address = ui.ask('Email address for renewal warnings', None, validator=email)
-    return [name], address, get_token(ctx, name, ddns_token)
+    return [name], address, get_token(ctx, name, ddns_token), [wildcard or name]
