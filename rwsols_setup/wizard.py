@@ -87,9 +87,11 @@ def ddns_token_url(zone):
         TOKEN_PAGE, quote(perms, safe=''), quote('*', safe=''), quote(ddns_token_name(zone), safe=''))
 
 
-def _optional_domain(v):
+def _required_domain(v):
     v = v.strip()
-    return _tunnel_hostname(v) if v else ''
+    if not v:
+        raise ValueError('Enter your domain, for example example.com.')
+    return _tunnel_hostname(v)
 
 
 # The remote access questions are asked one decision at a time: where (home only or outside too), then what
@@ -117,11 +119,14 @@ ADDRESS_HELP = [
 ]
 DDNS_SERVICE_REASON = 'A free dynamic DNS name belongs to its provider, so it cannot be used with Cloudflare.'
 DOMAIN_CHECK_HELP = [
-    'One of the two ways to connect from outside, Cloudflare Tunnel, only works with a domain whose DNS is managed by '
-    'Cloudflare: the domain\'s nameservers point at Cloudflare. The free Cloudflare plan is enough, and the domain can be '
-    'registered anywhere.',
-    'The check asks a public DNS server who hosts the domain. It needs no Cloudflare login.',
+    'This script will query public DNS servers to make sure your domain is accessible and to see what its nameservers are. '
+    'It needs no Cloudflare login.',
+    'If Cloudflare is detected as the DNS provider, you will be able to choose between port forwarding and a Cloudflare '
+    'Tunnel configuration.',
+    'If any other DNS provider is detected, only port forwarding will be available.',
 ]
+DOMAIN_QUERY = 'Your domain, e.g. example.com'
+OTHER_DOMAIN_QUERY = 'Do you have another domain whose DNS is managed by Cloudflare?'
 METHOD_QUERY = 'How should outside connections reach this Pi?'
 METHOD_ORDER = ['tunnel', 'port_forward']
 METHOD_OPTIONS = [
@@ -168,14 +173,20 @@ def cloudflare_availability(ctx, current_mode=None):
     seen = set()
 
     def check(name):
-        ui.say('Checking who manages DNS for %s ...' % name)
+        """Look the name up and print what was found: the domain, its nameservers, and whether they are Cloudflare's."""
+        ui.say('Checking %s ...' % name)
         c = dnscheck.check_domain(ctx.http, name)
         key = c.zone or c.name
         if key in seen:
             return c
         seen.add(key)
-        if c.status == 'cloudflare':
-            ui.success(dnscheck.describe(c) + ' Cloudflare Tunnel is available.')
+        if c.status in ('cloudflare', 'other'):
+            ui.success('Found %s.' % c.zone if c.zone == c.name else 'Found %s (part of the domain %s).' % (c.name, c.zone))
+            ui.say('Nameservers: %s' % ', '.join(c.nameservers))
+            if c.status == 'cloudflare':
+                ui.success('DNS provider: Cloudflare. Cloudflare Tunnel is available.')
+            else:
+                ui.warn('DNS provider: not Cloudflare. Only port forwarding is available.')
         else:
             ui.warn(dnscheck.describe(c))
         return c
@@ -190,16 +201,14 @@ def cloudflare_availability(ctx, current_mode=None):
             unknown = True
         else:
             failed.append(c)
-    if not unknown:
-        if ddns:
-            ui.say('Your dynamic DNS names (%s) are not on Cloudflare. If you have another domain that is, enter it here.'
-                   % ', '.join(ddns))
+    ask = not unknown
+    if ask and ddns:
+        # The address is already known (dynamic DNS on this Pi). Only someone with a second domain has more to say.
+        ask = ui.confirm(OTHER_DOMAIN_QUERY, False)
+    if ask:
         ui.say('Enter the domain you registered, such as example.com, not a full address.')
         while True:
-            name = ui.ask('Your domain, e.g. example.com (leave blank to skip)', None,
-                          validator=_optional_domain)
-            if not name:
-                break
+            name = ui.ask(DOMAIN_QUERY, None, validator=_required_domain)
             c = check(name)
             if c.status == 'cloudflare':
                 ctx.cloudflare_base = name
@@ -208,19 +217,17 @@ def cloudflare_availability(ctx, current_mode=None):
                 unknown = True
                 break
             failed.append(c)
-            ui.say('This domain works with port forwarding. Cloudflare Tunnel needs its DNS moved to Cloudflare first.')
-            ui.say('Enter a different domain, or leave it blank to continue with port forwarding.')
+            if c.status == 'other':
+                break
+            ui.say('Check the spelling and enter the domain again.')
     if unknown:
         ui.hint('Cloudflare Tunnel is offered anyway. Its setup will stop with an error if the domain is not on Cloudflare.')
         return True, ''
     if current_mode == 'tunnel':
         ui.hint('This install already uses Cloudflare Tunnel, so the option stays available.')
         return True, ''
-    if failed:
-        reason = ' '.join(dnscheck.describe(c) for c in failed[:2])
-    else:
-        reason = 'You did not name a domain whose DNS is managed by Cloudflare.'
-    return False, reason
+    other = [c for c in failed if c.status == 'other']
+    return False, dnscheck.describe((other or failed)[-1])
 
 
 def choose_mode(ctx, heading=True):

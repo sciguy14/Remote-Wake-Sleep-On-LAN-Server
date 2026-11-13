@@ -96,7 +96,7 @@ class ModeGateTests(unittest.TestCase):
         text = env.ui.text()
         self.assertLess(text.index(wizard.WHERE_QUERY), text.index('Checking your domain'))
         self.assertLess(text.index('Cloudflare Tunnel is available.'), text.index(wizard.METHOD_QUERY))
-        self.assertIn('DNS for example.com is managed by Cloudflare. Cloudflare Tunnel is available.', text)
+        self.assertIn('DNS provider: Cloudflare. Cloudflare Tunnel is available.', text)
         self.assertNotIn('Your domain, e.g. example.com', text)
         self.assertNotIn(SKIP, text)
         self.assertEqual(env.ctx.cloudflare_base, 'home.example.com')
@@ -105,7 +105,11 @@ class ModeGateTests(unittest.TestCase):
         env = self.env(names=['home.example.com'])
         wizard.choose_mode(env.ctx)
         text = env.ui.text()
-        self.assertIn('only works with a domain whose DNS is managed by Cloudflare', text)
+        self.assertIn('If Cloudflare is detected as the DNS provider, you will be able to choose between port forwarding and a '
+                      'Cloudflare Tunnel configuration.', text)
+        self.assertIn('If any other DNS provider is detected, only port forwarding will be available.', text)
+        self.assertIn('Found home.example.com (part of the domain example.com).', text)
+        self.assertIn('Nameservers: ada.ns.cloudflare.com, bob.ns.cloudflare.com', text)
         self.assertIn('the dynamic DNS feature of your router', text)
 
     def test_ddclient_domain_elsewhere_and_no_other_domain_hides_tunnel_and_says_why(self):
@@ -116,9 +120,11 @@ class ModeGateTests(unittest.TestCase):
         self.assertIn('Outside access will use port forwarding', text)
         self.assertIn(SKIP + ' DNS for elsewhere.example.net is not managed by Cloudflare', text)
         self.assertIn('python3 setup.py --remote-access', text)
+        self.assertIn(wizard.OTHER_DOMAIN_QUERY, text)       # the address is known, so a domain is only asked for on request
+        self.assertNotIn(wizard.DOMAIN_QUERY, text)
 
     def test_user_can_name_a_cloudflare_domain_updated_some_other_way(self):
-        env = self.env([('Your domain, e.g. example.com', 'example.com'), (wizard.METHOD_QUERY, 1)],
+        env = self.env([(wizard.OTHER_DOMAIN_QUERY, True), ('Your domain, e.g. example.com', 'example.com'), (wizard.METHOD_QUERY, 1)],
                        names=['pi.elsewhere.example.net'])
         self.assertEqual(wizard.choose_mode(env.ctx), 'tunnel')
         self.assertEqual(env.ctx.cloudflare_base, 'example.com')
@@ -126,15 +132,28 @@ class ModeGateTests(unittest.TestCase):
         w._plan_tunnel()
         self.assertEqual(w.new['TUNNEL_HOSTNAME'], 'rwsols.example.com')
 
-    def test_wrong_domain_is_reasked_until_blank(self):
-        env = self.env([OUTSIDE, ('Your domain, e.g. example.com', ['elsewhere.example.net', 'nothing-here.example.org', ''])])
+    def test_domain_is_required_and_a_name_that_does_not_exist_is_asked_again(self):
+        env = self.env([OUTSIDE, ('Your domain, e.g. example.com', ['', 'nothing-here.example.org', 'elsewhere.example.net'])])
         os.remove(env.config_path)
         self.assertEqual(wizard.choose_mode(env.ctx), 'port_forward')
-        self.assertNotIn(wizard.METHOD_QUERY, env.ui.text())
-        self.assertIn('This domain works with port forwarding.', env.ui.text())
         text = env.ui.text()
+        self.assertNotIn('blank', text)
+        self.assertIn('Enter your domain, for example example.com.', text)
         self.assertIn('nothing-here.example.org does not appear to be a registered domain', text)
-        self.assertIn(SKIP, text)
+        self.assertIn('Check the spelling and enter the domain again.', text)
+        self.assertNotIn(wizard.METHOD_QUERY, text)
+
+    def test_domain_on_another_dns_provider_is_reported_with_its_nameservers(self):
+        env = self.env([OUTSIDE, ('Your domain, e.g. example.com', 'elsewhere.example.net')])
+        os.remove(env.config_path)
+        self.assertEqual(wizard.choose_mode(env.ctx), 'port_forward')
+        text = env.ui.text()
+        for line in ('Checking elsewhere.example.net ...', 'Found elsewhere.example.net.',
+                     'Nameservers: ns1.dns-host.example, ns2.dns-host.example',
+                     'DNS provider: not Cloudflare. Only port forwarding is available.',
+                     SKIP + ' DNS for elsewhere.example.net is not managed by Cloudflare'):
+            self.assertIn(line, text)
+        self.assertEqual(text.count(wizard.DOMAIN_QUERY), 1)      # a real domain elsewhere is accepted, not asked again
 
     def fresh(self, rules):
         env = self.env(list(rules))
@@ -149,8 +168,9 @@ class ModeGateTests(unittest.TestCase):
         self.assertLess(text.index(wizard.ADDRESS_QUERY), text.index('Checking your domain'))
         self.assertLess(text.index('Checking your domain'), text.index(wizard.METHOD_QUERY))
         self.assertNotIn('Cloudflare', text.split(wizard.WHERE_QUERY)[0])   # the first step is only about home versus outside
-        self.assertIn('Checking who manages DNS for example.com ...', text)
-        self.assertIn('DNS for example.com is managed by Cloudflare. Cloudflare Tunnel is available.', text)
+        for line in ('Checking example.com ...', 'Found example.com.', 'Nameservers: ada.ns.cloudflare.com, bob.ns.cloudflare.com'):
+            self.assertIn(line, text)
+        self.assertIn('DNS provider: Cloudflare. Cloudflare Tunnel is available.', text)
         self.assertEqual(self.offered, [wizard.WHERE_OPTIONS, wizard.ADDRESS_OPTIONS, wizard.METHOD_OPTIONS])
 
     def test_free_dynamic_dns_name_means_port_forwarding_and_no_cloudflare_questions(self):
@@ -176,11 +196,6 @@ class ModeGateTests(unittest.TestCase):
         env = self.env(names=['home.example.com'])
         wizard.choose_mode(env.ctx)
         self.assertNotIn(wizard.ADDRESS_QUERY, env.ui.text())
-
-    def test_no_domain_at_all(self):
-        env = self.env()
-        self.assertEqual(wizard.choose_mode(env.ctx), 'port_forward')
-        self.assertIn(SKIP + ' You did not name a domain whose DNS is managed by Cloudflare.', env.ui.text())
 
     def test_failed_lookup_keeps_the_option(self):
         env = self.env(names=['home.example.com'])
