@@ -21,7 +21,7 @@ How the setup script is organised
 4. **HTTPS on your LAN**: the certificate the Pi's own web server uses.
 5. **Hostname allowlist**.
 6. **Security updates**.
-7. **Passphrase and computers**: last, because it ends in a text editor.
+7. **Passphrase and computers**: you set the passphrase, then enter each computer's name, MAC address and IP address as answers to questions. The script writes `config.php` for you; opening it in a text editor is optional.
 
 A first run goes through them in order. You can stop at any time; the next run continues with what is left. Later runs let you run any one section again, so changing one thing does not mean answering everything again. Installs that predate the checklist are recorded as complete.
 
