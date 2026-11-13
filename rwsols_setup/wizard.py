@@ -1,5 +1,7 @@
 """Interactive remote-access flow used by setup.py: mode, allowlist, Cloudflare Tunnel, Access, removal."""
+import json
 import re
+from urllib.parse import quote
 
 from . import access, apache, dnscheck, tunnel
 from .cloudflare_api import CloudflareAPI
@@ -33,8 +35,33 @@ TOKEN_SCOPES = [
 ACCESS_SCOPES = [
     'Account > Access: Apps and Policies > Edit',
     'Account > Access: Organizations, Identity Providers, and Groups > Read',
-    'Account > Access: Service Tokens > Edit   (only if you want a service token)',
 ]
+SERVICE_TOKEN_SCOPE = 'Account > Access: Service Tokens > Edit'
+TOKEN_PAGE = 'https://dash.cloudflare.com/profile/api-tokens'
+# Short keys for Cloudflare's "API token template URL" (a link that opens the Create Token form pre-filled):
+# https://developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/
+# dns, zone, access and access_acct are in Cloudflare's reference table. argotunnel (Cloudflare Tunnel) is not
+# listed there; the dashboard silently drops a key it does not know, which is why the wizard always tells the
+# user to compare the form with the printed list and then checks the pasted token itself.
+TEMPLATE_KEYS = [('argotunnel', 'edit'), ('dns', 'edit'), ('zone', 'read')]
+TEMPLATE_ACCESS_KEYS = [('access', 'edit'), ('access_acct', 'read')]
+PASTE_QUERY = 'What would you like to do about this token?'
+PASTE_OPTIONS = ['I fixed the token\'s permissions. Check it again.', 'Paste a different API token.',
+                 'Use this token anyway.']
+
+
+def token_name(hostname):
+    """Suggested name for the API token, so it is easy to find (and delete) in the Cloudflare dashboard later."""
+    return 'RWSOLS setup (%s)' % hostname if hostname else 'RWSOLS setup'
+
+
+def token_template_url(name, access=False):
+    """Link to Cloudflare's Create Token form with the name and permissions already filled in. It only fills in
+    the form: the user still reviews it and creates the token there, and no token ever passes through the link."""
+    keys = TEMPLATE_KEYS + (TEMPLATE_ACCESS_KEYS if access else [])
+    perms = json.dumps([{'key': k, 'type': t} for k, t in keys], separators=(',', ':'))
+    return '%s?permissionGroupKeys=%s&accountId=%s&zoneId=all&name=%s' % (
+        TOKEN_PAGE, quote(perms, safe=''), quote('*', safe=''), quote(name, safe=''))
 RECHECK_QUERY = 'What would you like to do about the dynamic DNS token?'
 RECHECK_OPTIONS = ['I added the missing permission to the token. Check it again.', 'Paste a different API token instead.']
 MAX_TOKEN_RECHECKS = 10
@@ -331,9 +358,15 @@ class RemoteAccessWizard(object):
             self.access_mode = 'automatic'
             self.identities = access.ask_identities(ui)
             self.session = access.ask_session_duration(ui, self.st.get('access', {}).get('session_duration'))
-            ui.explain('Service token', [
-                'A service token lets a script or app (not a person in a browser) pass the Access login by sending two headers. '
-                'Say yes only if you have such a client. The secret is shown once at the end and never stored.'])
+            ui.explain('Service token (most people should answer No)', [
+                'Cloudflare Access asks a person to log in through a web page. A program cannot do that. A service token is a '
+                'pair of secret values that a program sends instead, so it gets through without the login page.',
+                'Example: a phone shortcut, a home automation system or a script that wakes your computer by calling RWSOLS '
+                'directly, with nobody opening the page in a browser.',
+                'If you only ever use RWSOLS by opening it in a browser, you do not need one. Answer No. You can add one '
+                'later by running this again.',
+                'If you answer Yes: the API token needs one more permission (%s), and the secret is shown once at the end '
+                'and never stored.' % SERVICE_TOKEN_SCOPE])
             self.want_service_token = ui.confirm('Also create a service token for non-browser clients (scripts, apps)?', False)
         else:
             self.access_mode = 'manual'
@@ -471,24 +504,72 @@ class RemoteAccessWizard(object):
             if api:
                 self._api = api
                 return api
-            lines = [
-                'The wizard needs it to create the tunnel and the DNS record (and the Access login) in your Cloudflare account.',
-                'It is used only during this run, kept in memory and never written to disk or config.',
-                'Create it at https://dash.cloudflare.com/profile/api-tokens with at least these permissions:']
-            lines += ['    ' + x for x in TOKEN_SCOPES]
-            if self._needs_access_scopes():
-                lines.append('  and for Cloudflare Access:')
-                lines += ['    ' + x for x in ACCESS_SCOPES]
-            lines.append('(Or set the CLOUDFLARE_API_TOKEN environment variable and re-run.)')
-            ui.explain('Cloudflare API token', lines)
-            token = ui.ask_secret('Cloudflare API token')
-        if not token:
-            raise SetupError('No API token provided.')
+            self._explain_new_token()
+            for _ in range(MAX_TOKEN_RECHECKS):
+                token = ui.ask_secret('Cloudflare API token')
+                if not token:
+                    raise SetupError('No API token provided.')
+                api = CloudflareAPI(token, self.ctx.http, ui, self.ctx.dry_run)
+                if self._vet_pasted_token(api):
+                    self._api = api
+                    return api
+            raise SetupError('No usable API token provided.')
         self._api = CloudflareAPI(token, self.ctx.http, ui, self.ctx.dry_run)
         return self._api
 
     def _needs_access_scopes(self):
         return self.access_mode == 'automatic' or bool(self.st.get('access', {}).get('app_id'))
+
+    def _scope_lines(self):
+        """The permissions this run needs, and no others: Access ones only with Access, the service token one
+        only when a service token was asked for."""
+        lines = ['    ' + x for x in TOKEN_SCOPES]
+        if self._needs_access_scopes():
+            lines.append('  and for Cloudflare Access:')
+            lines += ['    ' + x for x in ACCESS_SCOPES]
+            if self.want_service_token:
+                lines.append('    ' + SERVICE_TOKEN_SCOPE)
+        return lines
+
+    def _explain_new_token(self):
+        ui = self.ui
+        hostname = self.new.get('TUNNEL_HOSTNAME') or self.st.get('tunnel', {}).get('hostname')
+        name = token_name(hostname)
+        ui.explain('Cloudflare API token', [
+            'The wizard needs it to create the tunnel and the DNS record (and the Access login) in your Cloudflare account.',
+            'It is used only during this run, kept in memory and never written to disk or config.',
+            'The link below opens Cloudflare\'s Create Token page with the name and permissions already filled in. '
+            'Check them against this list before you create the token, and add any that are missing:']
+            + self._scope_lines()
+            + ['Suggested name: %s' % name]
+            + (['The link cannot pre-select %s. Add that one on the page yourself (Add more > Account).' % SERVICE_TOKEN_SCOPE]
+               if self._needs_access_scopes() and self.want_service_token else [])
+            + ['The link selects all your zones and accounts. You can narrow it on that page to the zone of %s.' % (hostname or 'your tunnel hostname'),
+               'Then: Continue to summary > Create Token > copy the token and paste it here.',
+               '(No link? Create a Custom Token at %s. Or set the CLOUDFLARE_API_TOKEN environment variable and re-run.)' % TOKEN_PAGE])
+        ui.say('Open this link in a browser:')
+        ui.link(token_template_url(name, self._needs_access_scopes()))
+
+    def _vet_pasted_token(self, api):
+        """Checks a pasted token before anything is changed. True = use it, False = ask for another one."""
+        ui = self.ui
+        for _ in range(MAX_TOKEN_RECHECKS):
+            gaps = self._token_gaps(api)
+            if not gaps:
+                ui.success('The token has the permissions this needs.')
+                return True
+            ui.warn('This token is missing something:')
+            for g in gaps:
+                ui.warn('  - ' + g)
+            ui.say('To fix it: open %s, choose Edit on the token, add what is listed above, then "Continue to summary" '
+                   'and "Update token". The token value does not change.' % TOKEN_PAGE)
+            choice = ui.choose(PASTE_QUERY, PASTE_OPTIONS)[0]
+            if choice == 2:
+                return False
+            if choice == 3:
+                return True
+            ui.say('Checking the token again...')
+        return True     # the check itself may be wrong; the real calls report a clear error if the token is not enough
 
     def _token_gaps(self, api):
         """What `api`'s token cannot do for this run, as a list of sentences (empty = it looks sufficient).
@@ -533,8 +614,7 @@ class RemoteAccessWizard(object):
             'use the same one, so you do not have to create and paste another.',
             'It only works if that token also has the permissions listed below. A token made just for dynamic DNS usually has '
             'the two Zone permissions but not the Tunnel one. The wizard checks, and tells you what is missing.',
-            'Needed:'] + ['    ' + x for x in TOKEN_SCOPES]
-            + (['  and for Cloudflare Access:'] + ['    ' + x for x in ACCESS_SCOPES] if self._needs_access_scopes() else [])
+            'Needed:'] + self._scope_lines()
             + ['Trade-off: the ddclient token stays on this Pi permanently, so adding permissions to it means a more powerful '
                'token is stored here for good. A separate token that you paste once and then delete in the Cloudflare dashboard '
                'is the tighter choice. Both work.'])
