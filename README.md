@@ -53,6 +53,7 @@ Setup script options:
 - `python3 setup.py` shows the checklist and runs what is left, or one section again.
 - `python3 setup.py --remote-access` runs only the mode, allowlist, Tunnel and Access questions. Run it after editing the remote access settings in `config.php` by hand.
 - `python3 setup.py --remove-tunnel` removes the Tunnel setup that the script created.
+- `python3 setup.py --reset` starts over. The same choice is in the menu as "Start over". It asks first (the default is No). It puts `config.php` back to the defaults (passphrase, computers, allowed hosts and remote access settings are cleared, so nobody can log in until setup is finished again), clears the record of finished sections, and removes the Cloudflare Tunnel service and the Apache settings the script added. Your old `config.php` is saved in the setup folder as a hidden file whose name starts with `.config.php.before-reset-`. Installed software, certificates, automatic updates and dynamic DNS are kept (it offers to remove the dynamic DNS configuration as a separate question). Nothing in your Cloudflare account is deleted; use `--remove-tunnel` first if you want that.
 - `python3 setup.py --auto-updates` runs only the automatic security updates question (see below).
 - `--dry-run` (only with `--remote-access` or `--remove-tunnel`) prints what would change and changes nothing. `--force` (use it with `--remote-access`) replaces a conflicting DNS record for the tunnel hostname.
 
