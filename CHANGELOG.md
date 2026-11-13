@@ -3,7 +3,7 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [4.0.0] - Unreleased
 
 Remote access on existing installs is unaffected unless they opt in. Two security changes apply to every install: login throttling and stricter permissions on `config.php` (see Changed). Re-running `python3 setup.py` on an existing install adds one question (the remote access mode, defaulting to port forwarding), an optional hostname allowlist question (defaulting to off) and a one-time question about automatic security updates (defaulting to yes; answering no changes nothing).
 
