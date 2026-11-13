@@ -368,7 +368,7 @@ class AllowlistOptionTests(unittest.TestCase):
 
     def test_full_run_through_plain_ui_with_piped_answers(self):
         env = self.env({LAN_IP: 'pi.lan.example.net'}, {'pi.lan.example.net': [LAN_IP]})
-        ui, out = plain(['', '2', '1', '', '', ''])  # no Cloudflare domain, port forwarding, allowlist defaults
+        ui, out = plain(['2', '2', '1', '', '', ''])  # free dynamic DNS name, port forwarding, allowlist defaults
         env.ctx.ui = ui
         wizard.run_remote_access(env.ctx, [], LAN_IP)
         self.assertIn("$ALLOWED_HOSTS = array('raspberrypi.local', 'pi.lan.example.net');", env.config())
