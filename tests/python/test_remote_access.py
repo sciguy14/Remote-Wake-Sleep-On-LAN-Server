@@ -174,6 +174,48 @@ class CreateTests(unittest.TestCase):
 class AccessTests(unittest.TestCase):
     RULES = TUNNEL_RULES + [('Enable Cloudflare Access', True), ('Emails allowed', 'User@Example.com')]
 
+    def test_login_length_defaults_to_one_month_on_app_and_policy(self):
+        env = Env(self.RULES)
+        self.addCleanup(env.cleanup)
+        run_tunnel(env)
+        self.assertIn(access.SESSION_QUERY, env.ui.out)
+        self.assertEqual(env.cf.apps[0]['session_duration'], '720h')
+        self.assertEqual(env.cf.policies[0]['session_duration'], '720h')
+        self.assertIn('"session_duration": "720h"', env.state_text())
+
+    def test_login_length_choice_is_applied(self):
+        for pick, want in ((1, '24h'), (2, '168h'), (3, '720h')):
+            env = Env(self.RULES + [(access.SESSION_QUERY, pick)])
+            self.addCleanup(env.cleanup)
+            run_tunnel(env)
+            self.assertEqual((env.cf.apps[0]['session_duration'], env.cf.policies[0]['session_duration']), (want, want))
+
+    def test_rerun_keeps_the_saved_login_length_and_can_change_it(self):
+        env = Env(self.RULES + [(access.SESSION_QUERY, 2)])
+        self.addCleanup(env.cleanup)
+        run_tunnel(env)
+        app_before = dict(env.cf.apps[0])
+        rerun_env(env, self.RULES)                                   # no answer: the saved 1 week is the default
+        run_tunnel(env)
+        self.assertEqual(env.cf.apps[0]['session_duration'], '168h')
+        rerun_env(env, self.RULES + [(access.SESSION_QUERY, 1)])
+        run_tunnel(env)
+        app = env.cf.apps[0]
+        self.assertEqual((app['session_duration'], env.cf.policies[0]['session_duration']), ('24h', '24h'))
+        self.assertEqual(len(env.cf.apps), 1)
+        for k in ('id', 'aud', 'domain', 'type', 'name'):
+            self.assertEqual(app[k], app_before[k])
+        self.assertEqual([p['id'] for p in app['policies']], [p['id'] for p in app_before['policies']])
+
+    def test_login_length_of_an_app_the_wizard_did_not_create_is_left_alone(self):
+        env = Env(self.RULES)
+        self.addCleanup(env.cleanup)
+        env.cf.apps.append({'id': 'app-theirs', 'type': 'self_hosted', 'domain': HOST, 'aud': 'a' * 64,
+                            'session_duration': '24h', 'policies': []})
+        run_tunnel(env)
+        self.assertEqual(env.cf.apps[0]['session_duration'], '24h')
+        self.assertIn('was not changed', env.ui.text())
+
     def test_access_automatic_on(self):
         env = Env(self.RULES)
         self.addCleanup(env.cleanup)
