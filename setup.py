@@ -943,13 +943,15 @@ def _11_modify_config_file():
             p2 = ui.ask_secret('Please re-enter the password to confirm', strip=False)
             if p1 != p2:
                 ui.say("The provided passwords do not match. Please try again...\n")
+            elif not p1:
+                ui.say("The password cannot be empty. Please try again...\n")
             else:
                 break
 
         # We use PHP's password hashing function, since PHP will be responsible for checking the password hash when received by the website
-        # Note that this must be in single quotes so that PHP doesn't expand variables inside the string
+        # The password goes to PHP on standard input: it never appears in the process list, and no character in it can break the command
         try:
-            r = subprocess.run(['php', '-r', 'echo password_hash(\'' + p1 + '\', PASSWORD_DEFAULT);'], capture_output=True, check=True)
+            r = subprocess.run(['php', '-r', 'echo password_hash(stream_get_contents(STDIN), PASSWORD_DEFAULT);'], input=p1.encode('utf8'), capture_output=True, check=True)
             pw_hash = r.stdout.decode('utf8').strip()
         except subprocess.CalledProcessError as e:
             ui.warn("Error hashing password.")
@@ -972,12 +974,18 @@ def _11_modify_config_file():
             ui.warn('The password could not be updated.')
             return False
 
-    ui.explain("Your computers", [
-        "The last thing to fill in is the list of computers RWSOLS can wake: their names, MAC addresses and IP addresses. That is easiest in a text editor.",
-        "The file opens in nano. Edit the values near the top, then press Ctrl+O and Enter to save, and Ctrl+X to leave.",
-        "Leave the settings further down (allowed hosts, tunnel, Access) alone: the other setup sections manage those."])
-    if not ui.confirm("Open config.php in the editor now?", True):
-        ui.say("Skipped. Run this section again when you want to edit it.")
+    # The list of computers and the sleep settings are asked as questions and written to the file
+    from rwsols_setup import computers, phpconfig
+    try:
+        computers.run(ui, phpconfig.ConfigFile(str(rwsols_config_user)))
+    except (phpconfig.PhpConfigError, OSError) as e:
+        ui.warn("Could not update the config file: " + str(e))
+        return False
+
+    ui.explain("Double-check the file (optional)", [
+        "Everything is filled in. If you want to look at the result, or change something by hand, the file can open in the nano text editor.",
+        "In nano: press Ctrl+O and Enter to save, and Ctrl+X to leave. Leave the settings further down (allowed hosts, tunnel, Access) alone: the other setup sections manage those."])
+    if not ui.confirm("Open config.php in the editor to double-check it?", False):
         return True
     try:
         subprocess.run(['nano', str(rwsols_config_user)], check=True)
