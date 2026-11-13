@@ -11,9 +11,23 @@ For more info, see [my blog post about RWSOLS](https://www.jeremyblum.com/2013/0
 If you're having problems with getting RWSOLS working, check the [FAQ](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Notes-and-FAQs) first, or [the comments](https://www.jeremyblum.com/2013/07/14/rpi-wol-server/#comments) on my blog. If you still can't get it to work, please [create a GitHub issue](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/issues) with specific details.
 
 
+How the setup script is organised
+---------------------------------
+`python3 setup.py` shows a checklist of seven sections, with what is done and what is left, worked out from what is on the Pi:
+
+1. **Base install**: packages, permissions, web files.
+2. **Remote access**: LAN only, port forwarding, or Cloudflare Tunnel (with optional Cloudflare Access).
+3. **Dynamic DNS (optional)**: required for port forwarding; optional otherwise, and independent of a tunnel.
+4. **HTTPS on your LAN**: the certificate the Pi's own web server uses.
+5. **Hostname allowlist**.
+6. **Security updates**.
+7. **Passphrase and computers**: last, because it ends in a text editor.
+
+A first run goes through them in order. You can stop at any time; the next run continues with what is left. Later runs let you run any one section again, so changing one thing does not mean answering everything again. Installs that predate the checklist are recorded as complete.
+
 Remote access options
 ---------------------
-The setup script asks how you want to reach RWSOLS from outside your home network. Re-running `python3 setup.py` lets you switch.
+The Remote access section asks how you want to reach RWSOLS from outside your home network. Run that section again to switch.
 
 - **None (LAN only).** The default for new installs. RWSOLS is only reachable from inside your network.
 - **Port forwarding.** The original method: dynamic DNS, router port forwards for 80/443, and an optional Let's Encrypt certificate. This is the default for installs that already exist. See the [installation instructions](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Installation-(v3)).
@@ -24,6 +38,10 @@ Before the mode question, the script checks whether Cloudflare is an option: it 
 
 For the automatic Tunnel setup the script needs a Cloudflare API token. It prints a link that opens Cloudflare's Create Token page with a suggested name and the permissions already filled in, lists only the permissions your answers need, and checks the token you paste before changing anything. If ddclient on the Pi already uses a Cloudflare API token for dynamic DNS, the script offers to use that one, checks that it has the permissions needed (Tunnel, and Access if you enable it), and tells you what is missing if it does not. You can then add the permission in the Cloudflare dashboard and have the script check again without starting over, or paste a different token. The dynamic DNS step mentions this when you create that token.
 
+**Dynamic DNS and a tunnel together.** A tunnel does not use your home IP, so RWSOLS needs no dynamic DNS in Tunnel mode. If you want a domain name to keep following your home IP for something else (a VPN, another service), the Dynamic DNS section sets that up or keeps it running. The tunnel uses its own name (for example `rwsols.example.com`) and dynamic DNS updates a different record (for example `example.com`).
+
+**Certificates.** In Tunnel mode your tunnel address has a certificate that every browser trusts, provided and renewed by Cloudflare, inside and outside your home. A Let's Encrypt certificate that renews over port 80 is not needed any more, and stops renewing once the port forward is gone. The HTTPS section is then only about opening the Pi directly on your LAN: self-signed (browsers warn), plain HTTP, or a trusted Let's Encrypt certificate for a LAN name inside a domain hosted at Cloudflare, obtained with a DNS challenge (no open port; a DNS-only API token is stored on the Pi, readable only by root, for renewals). A `.local` name or an IP address can never get a trusted certificate.
+
 Separately from the mode, you can turn on a hostname allowlist, so that Apache and PHP answer only to the host names you list (protection against DNS rebinding). See [Security](https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Security).
 
 The setup script also offers to turn on automatic security updates for the operating system (Debian's `unattended-upgrades`, extended to the Raspberry Pi package archive), with an optional automatic restart at 04:00 when an update needs one. It asks once, and you can say no.
@@ -32,7 +50,7 @@ The setup script installs `python3-rich` (with apt, if it is available) for nice
 
 Setup script options:
 
-- `python3 setup.py` runs the full setup.
+- `python3 setup.py` shows the checklist and runs what is left, or one section again.
 - `python3 setup.py --remote-access` runs only the mode, allowlist, Tunnel and Access questions. Run it after editing the remote access settings in `config.php` by hand.
 - `python3 setup.py --remove-tunnel` removes the Tunnel setup that the script created.
 - `python3 setup.py --auto-updates` runs only the automatic security updates question (see below).
@@ -66,7 +84,7 @@ Remote access works as before unless you opt in: a `config.php` without the new 
 - **Login throttling.** Five wrong passphrases from one address lock that address out for 15 minutes, even with the right passphrase. Add `$LOGIN_MAX_ATTEMPTS = 0;` to `config.php` for the old behavior.
 - **Stricter file permissions.** The setup script makes `/var/www/html/config.php` readable only by root and the web server (`root:www-data`, mode 640), and the `/var/www/html_backup_*` folders readable only by root. Use `sudo` to read them.
 
-Otherwise, if you re-run `python3 setup.py` on an existing install, the only visible differences are one new question about the remote access mode (the default is port forwarding, which is the previous behavior), an optional question about the hostname allowlist (the default is off), and a one-time question about automatic security updates (the default is yes; answer no to leave the system as it is).
+Otherwise, re-running `python3 setup.py` on an existing install shows the checklist with every section recorded as done (remote access as port forwarding, the previous behavior) and asks nothing unless you choose a section. The one exception is the automatic security updates section, which is listed as left to do until you answer it once (the default is yes; answer no to leave the system as it is). The dot files of earlier versions are still honored for the one-time steps.
 
 
 Moving from port forwarding to Cloudflare Tunnel
