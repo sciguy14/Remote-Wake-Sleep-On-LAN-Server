@@ -151,8 +151,9 @@ def section_remote():
     from rwsols_setup import sections, wizard
     from rwsols_setup.errors import SetupError
     before = sections.load(ctx).get('mode')
+    done_before = dict(sections.load(ctx)['sections'])
     try:
-        remote_mode = wizard.choose_mode(ctx)
+        remote_mode = wizard.choose_mode(ctx, heading=False)
         wiz = wizard.RemoteAccessWizard(ctx, remote_mode, [], get_local_ip() or None)
         wiz.plan(parts=('mode',))
         wiz.prepare_cloud()
@@ -165,8 +166,10 @@ def section_remote():
     if before != remote_mode:
         # The certificate choices depend on the mode, and port forwarding cannot work without dynamic DNS.
         redo = ['https'] + (['ddns'] if remote_mode == "port_forward" and not wizard.ddclient_hosts(ctx.runner) else [])
-        sections.unmark(ctx, *redo)
-        ui.hint("Because the remote access mode changed, setup will also go through: " + ", ".join(sections.TITLES[k] for k in redo) + ".")
+        redo = [k for k in redo if done_before.get(k)] # Sections still on the list anyway need no announcement
+        if redo:
+            sections.unmark(ctx, *redo)
+            ui.hint("Because the remote access mode changed, setup will also go through: " + ", ".join(sections.TITLES[k] for k in redo) + ".")
     return True
 
 # Section 3: dynamic DNS. Required for port forwarding. Optional otherwise, and independent of a Cloudflare Tunnel.
@@ -178,11 +181,11 @@ def section_ddns():
     hosts = wizard.ddclient_hosts(ctx.runner)
     urls = []
     if required:
-        ui.explain("Dynamic DNS", [
+        ui.explain("Why you need it", [
             "Port forwarding needs a domain name that always points at your home IP address, which most internet providers change from time to time. Dynamic DNS keeps the name up to date.",
             "This Pi can do the updating (with ddclient), or your router or another device can."])
     else:
-        ui.explain("Dynamic DNS (optional)", [
+        ui.explain("Do you need it?", [
             "With " + sections.MODE_NAMES.get(mode, mode) + ", RWSOLS itself does not need dynamic DNS.",
             "Set it up only if you want a domain name to keep following your home IP address for something else: a VPN, a game server, another website on your network.",
             "It lives happily next to a Cloudflare Tunnel. The tunnel uses its own name (for example rwsols.example.com), and dynamic DNS keeps updating a different record (for example example.com)."])
@@ -426,8 +429,12 @@ def _04_setup_ddns(ddns_option=None):
                         f.write('login=token\n') # Cloudflare requires the use of an API token, so no username is entered.
                         ui.say("\nFollow the instructions at this link to create an API token for your cloudflare account. It must have the permissions shown in the screenshot.")
                         ui.say("https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Notes-and-FAQs#cloudflare-ddns")
-                        from rwsols_setup.wizard import DDNS_TOKEN_NOTE
-                        ui.explain('Planning to use Cloudflare Tunnel too?', DDNS_TOKEN_NOTE)
+                        from rwsols_setup import wizard as wizard_mod
+                        ui.say("\nOr open this link, which fills in the token name (" + wizard_mod.ddns_token_name(url_prediction) + ") and the two permissions for you. On that page, narrow \"Zone Resources\" to " + url_prediction + ", then choose Continue to summary and Create Token:")
+                        ui.link(wizard_mod.ddns_token_url(url_prediction))
+                        note = wizard_mod.ddns_token_note(current_mode() if ctx is not None else None)
+                        if note:
+                            ui.explain(note[0], note[1])
                         v = ui.ask_secret('\nEnter the generated cloudflare API token', strip=False)
                         f.write('password=' + v + '\n')
                     else:
@@ -643,6 +650,8 @@ def _07_lan_encryption_check():
             "Your tunnel address, https://" + tunnel_host + ", already has a certificate that every browser trusts. Cloudflare provides and renews it, and it works the same inside and outside your home. Using that one address everywhere is the simplest way to never see a browser warning.",
             "A Let's Encrypt certificate that renews through port 80 is not needed with a tunnel. If you have one from a port forwarding setup, it stops renewing once the port forward is gone.",
             "The rest of this section is only about opening RWSOLS directly on your home network (for example by its .local name), which keeps working when your internet connection is down."]
+    if pathlib.Path('/etc/apache2/sites-enabled/000-default-le-ssl.conf').exists() and (ctx is None or current_mode() != "port_forward"):
+        lines.append("This Pi currently has a Let's Encrypt certificate that renews through port 80. If you keep the existing settings it works until it expires (within 90 days), and it renews only while port 80 is still forwarded to this Pi. Pick one of the other choices to replace it.")
     lines += [
         "The LAN name is how you reach this Pi from your home network (this Pi's mDNS name by default). It is also used as the name on the self-signed certificate, if you choose one.",
         "Self-signed HTTPS encrypts traffic on your LAN, but browsers will show a warning because no authority vouches for the certificate. Plain HTTP has no warning but no encryption.",
