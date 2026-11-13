@@ -601,8 +601,6 @@ class MiscTests(unittest.TestCase):
         self.addCleanup(env.cleanup)
         self.assertEqual(wizard.choose_mode(env.ctx), 'port_forward')  # config.php exists => existing install
         os.remove(env.config_path)
-        self.assertEqual(wizard.choose_mode(env.ctx), 'port_forward')  # default answer: "a domain of my own", none named
-        env.make_ctx([(wizard.ADDRESS_QUERY, 3)])
         self.assertEqual(wizard.choose_mode(env.ctx), 'none')
 
     def test_token_scope_text_present(self):
