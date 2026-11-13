@@ -199,9 +199,20 @@ def section_remote():
 def known_domain():
     if ctx is None:
         return None
-    from rwsols_setup import sections
-    d = sections.load(ctx).get('domain')
-    return d if isinstance(d, dict) and d.get('name') else None
+    from rwsols_setup import sections, dnscheck
+    st = sections.load(ctx)
+    d = st.get('domain')
+    if isinstance(d, dict) and d.get('name'):
+        return d
+    # No record (the tunnel was set up by an earlier version of this script): a working tunnel's domain is on Cloudflare
+    hostname = (st.get('tunnel') or {}).get('hostname')
+    if hostname:
+        c = dnscheck.check_domain(ctx.http, hostname)
+        if c.status == 'cloudflare' and c.zone:
+            d = {'name': c.zone, 'provider': 'cloudflare'}
+            sections.update(ctx, domain=d)
+            return d
+    return None
 
 # Section 3: dynamic DNS. Required for port forwarding. Optional otherwise, and independent of a Cloudflare Tunnel.
 def section_ddns():

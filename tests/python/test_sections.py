@@ -312,6 +312,13 @@ class SetupScriptSectionTests(unittest.TestCase):
         self.assertIn('Using Cloudflare for example.com.', text)
         self.assertNotIn(wizard.DDNS_PROTOCOL_QUERY, str(env.ui.choices))
 
+    def test_domain_of_a_tunnel_set_up_before_the_domain_was_recorded_is_looked_up(self):
+        env = self.wire()
+        sections.load(env.ctx)
+        sections.update(env.ctx, mode='tunnel', tunnel={'hostname': HOST})
+        self.assertEqual(self.setup.known_domain(), {'name': 'example.com', 'provider': 'cloudflare'})
+        self.assertEqual(json.loads(env.state_text())['domain']['name'], 'example.com')
+
     def test_cloudflare_dynamic_dns_can_be_declined_for_another_domain_or_provider(self):
         env = self.wire([(wizard.DDNS_CLOUDFLARE_QUERY % 'example.com', False), (wizard.DDNS_PROTOCOL_QUERY, 2)])
         sections.load(env.ctx)
