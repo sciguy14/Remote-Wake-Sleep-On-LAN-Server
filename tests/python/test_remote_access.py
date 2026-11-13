@@ -128,7 +128,15 @@ class CreateTests(unittest.TestCase):
         self.assertEqual(env.runner.mutations, [])
         self.assertEqual(env.config(), before)
         self.assertEqual(env.state_text(), '')
-        self.assertIn('[dry-run]', env.ui.text())
+        text = env.ui.text()
+        self.assertIn('[dry-run]', text)
+        # A dry run never claims that something was done.
+        for claim in ('Created tunnel', 'Created proxied CNAME', 'Set tunnel ingress', 'config.php updated',
+                      'allowlist applied', 'is set up', 'Installing cloudflared'):
+            self.assertNotIn(claim, text)
+        for plan in ("[dry-run] would create tunnel", '[dry-run] would create proxied CNAME', '[dry-run] would update config.php',
+                     'would be set up at', 'Nothing was changed'):
+            self.assertIn(plan, text)
         self.assertEqual(env.cf.tunnels, [])
 
     def test_manual_token_path_makes_no_api_calls(self):

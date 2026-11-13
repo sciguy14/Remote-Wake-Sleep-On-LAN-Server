@@ -178,3 +178,7 @@ class Context(object):
         self.runner = DryRunRunner(runner, ui) if dry_run else runner
         self.config_path = os.path.join(repo_dir, 'www', 'html', 'config.php')
         self.state_path = os.path.join(repo_dir, '.rwsols_remote_access.json')
+
+    def did(self, done, would):
+        """Report a change. In a dry run nothing was changed, so say what would happen instead of what happened."""
+        self.ui.say('[dry-run] would ' + would if self.dry_run else done)

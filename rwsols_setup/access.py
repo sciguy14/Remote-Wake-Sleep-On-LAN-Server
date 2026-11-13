@@ -116,7 +116,7 @@ class AccessProvisioner(object):
                          or existing.get('session_duration') != self.session):
                 self.api.mutate('PUT', '%s/%s' % (base, existing['id']),
                                 {'name': name, 'decision': decision, 'include': include, 'session_duration': self.session}, {})
-                self.ctx.ui.say('Updated Access policy %r.' % name)
+                self.ctx.did('Updated Access policy %r.' % name, 'update Access policy %r.' % name)
             elif not ours and existing.get('include') != include:
                 self.ctx.ui.warn('Access policy %r already exists and differs from your answers; it was not modified.' % name)
             self.a[state_key] = existing['id']
@@ -127,7 +127,7 @@ class AccessProvisioner(object):
                               {'id': '<new-policy-id>'})
         self.a[state_key] = res['id']
         self.a[state_key + '_created'] = True
-        self.ctx.ui.say('Created Access policy %r.' % name)
+        self.ctx.did('Created Access policy %r.' % name, 'create Access policy %r.' % name)
         return res['id']
 
     def ensure_app(self, policy_ids):
@@ -150,7 +150,7 @@ class AccessProvisioner(object):
                                         for i, p in enumerate(app.get('policies') or [])]
                     body['session_duration'] = self.session
                     self.api.mutate('PUT', '%s/%s' % (base, app['id']), body, {})
-                    self.ctx.ui.say('Updated the login length of the Access application.')
+                    self.ctx.did('Updated the login length of the Access application.', 'update the login length of the Access application.')
                 else:
                     self.ctx.ui.warn('The existing Access application was not created by this wizard, so its login length '
                                      '(%s) was not changed. Change it in the dashboard if intended.' % app.get('session_duration'))
@@ -164,7 +164,7 @@ class AccessProvisioner(object):
                     'policies': [{'id': pid, 'precedence': i + 1} for i, pid in enumerate(policy_ids)]}
             app = self.api.mutate('POST', base, body, {'id': '<new-app-id>', 'aud': '0' * 64})
             self.a['app_created'] = True
-            self.ctx.ui.say('Created Access application for %s.' % self.hostname)
+            self.ctx.did('Created Access application for %s.' % self.hostname, 'create an Access application for %s.' % self.hostname)
         self.a['app_id'] = app['id']
         return app['aud']
 
