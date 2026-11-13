@@ -200,8 +200,6 @@ class ChecklistTests(unittest.TestCase):
         sections.update(env.ctx, https={'kind': 'dns', 'names': ['pi.home.example.com']})
         sts = sections.statuses(env.ctx, ['example.com'])
         self.assertEqual(sts['https'].label, 'trusted certificate for pi.home.example.com (DNS challenge)')
-        sections.update(env.ctx, https={'kind': 'dns', 'names': ['pi.home.example.com'], 'wildcard': '*.home.example.com'})
-        self.assertEqual(sections.statuses(env.ctx)['https'].label, 'trusted wildcard certificate for *.home.example.com (DNS challenge)')
         self.assertEqual(sts['remote'].label, 'Cloudflare Tunnel')
         self.assertEqual(sts['ddns'].label, 'not used')
         sections.update(env.ctx, ddns='pi')

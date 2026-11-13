@@ -91,14 +91,11 @@ def https_label(ctx, st):
     r = ctx.runner
     kind = (st.get('https') or {}).get('kind')
     names = (st.get('https') or {}).get('names') or []
-    wildcard = (st.get('https') or {}).get('wildcard')
     try:
         if r.path_exists(LE_SITE):
             return 'Let\'s Encrypt certificate (renews over port 80)'
         site = r.read_file(DEFAULT_SITE) or b''
         if b'SSLEngine' in site and r.path_exists(SSL_MOD):
-            if kind == 'dns' and wildcard:
-                return 'trusted wildcard certificate for %s (DNS challenge)' % wildcard
             if kind == 'dns':
                 return 'trusted certificate for %s (DNS challenge)' % ', '.join(names)
             return 'self-signed certificate'
