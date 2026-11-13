@@ -302,6 +302,33 @@ class SetupScriptSectionTests(unittest.TestCase):
         self.assertEqual(json.loads(env.state_text())['ddns'], 'pi')
         self.assertFalse([c for c in runner.mutations])
 
+    def test_domain_found_on_cloudflare_selects_cloudflare_dynamic_dns_without_the_protocol_list(self):
+        env = self.wire()
+        sections.load(env.ctx)
+        sections.update(env.ctx, domain={'name': 'example.com', 'provider': 'cloudflare'})
+        self.assertEqual(wizard.choose_ddns_protocol(env.ui, self.setup.known_domain()), ('cloudflare', 'example.com'))
+        text = env.ui.text()
+        self.assertIn('DNS for example.com is managed by Cloudflare', text)
+        self.assertIn('Using Cloudflare for example.com.', text)
+        self.assertNotIn(wizard.DDNS_PROTOCOL_QUERY, str(env.ui.choices))
+
+    def test_cloudflare_dynamic_dns_can_be_declined_for_another_domain_or_provider(self):
+        env = self.wire([(wizard.DDNS_CLOUDFLARE_QUERY % 'example.com', False), (wizard.DDNS_PROTOCOL_QUERY, 2)])
+        sections.load(env.ctx)
+        sections.update(env.ctx, domain={'name': 'example.com', 'provider': 'cloudflare'})
+        self.assertEqual(wizard.choose_ddns_protocol(env.ui, self.setup.known_domain()), ('noip', None))
+
+    def test_domain_elsewhere_or_unknown_gets_the_full_protocol_list(self):
+        env = self.wire([(wizard.DDNS_PROTOCOL_QUERY, 3)])
+        sections.load(env.ctx)
+        self.assertIsNone(self.setup.known_domain())
+        self.assertEqual(wizard.choose_ddns_protocol(env.ui, None), ('cloudflare', None))      # nothing known: zone is asked later
+        sections.update(env.ctx, domain={'name': 'example.net', 'provider': 'other'})
+        self.assertEqual(wizard.choose_ddns_protocol(env.ui, self.setup.known_domain()), ('cloudflare', None))
+        text = env.ui.text()
+        self.assertIn('DNS for example.net is not managed by Cloudflare', text)
+        self.assertNotIn(wizard.DDNS_CLOUDFLARE_QUERY % 'example.net', text)
+
     def test_port_forwarding_does_not_offer_to_skip_dynamic_dns(self):
         env = self.wire()
         sections.load(env.ctx)
