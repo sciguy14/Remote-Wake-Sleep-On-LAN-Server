@@ -39,8 +39,10 @@ class PlanTests(unittest.TestCase):
     def test_reuses_the_dynamic_dns_token_when_chosen(self):
         env = make()
         self.addCleanup(env.cleanup)
-        names, email, token = lancert.plan(env.ctx, ['raspberrypi.local', NAME], DNS_TOKEN)
+        names, email, token, cert_names = lancert.plan(env.ctx, ['raspberrypi.local', NAME], DNS_TOKEN)
         self.assertEqual((names, email, token), ([NAME], 'me@example.com', DNS_TOKEN))
+        self.assertEqual(cert_names, [NAME])                                  # one name is the default
+        self.assertIn(lancert.COVER_QUERY, env.ui.text())
         text = env.ui.text()
         self.assertIn('can never get a trusted certificate', text)
         self.assertIn('stays on this Pi', text)
@@ -52,7 +54,7 @@ class PlanTests(unittest.TestCase):
         env = make(RULES + [(lancert.SOURCE_QUERY, 2)], secrets=['NOTATOKEN-0123456789abcdef', DNS_TOKEN])
         self.addCleanup(env.cleanup)
         env.cf.limited_tokens['NOTATOKEN-0123456789abcdef'] = ('/zones',)
-        names, email, token = lancert.plan(env.ctx, [], DNS_TOKEN)
+        names, email, token, _ = lancert.plan(env.ctx, [], DNS_TOKEN)
         self.assertEqual(token, DNS_TOKEN)
         self.assertIn('That token cannot see the Cloudflare zone', env.ui.text())
         self.assertTrue([l for l in env.ui.out if l.startswith(lancert.TOKEN_PAGE + '?')])
@@ -69,8 +71,24 @@ class PlanTests(unittest.TestCase):
                    secrets=[DNS_TOKEN])
         self.addCleanup(env.cleanup)
         env.cf.ns['example.net'] = ['ns1.registrar.example.']
-        names, _, _ = lancert.plan(env.ctx, [], None)
+        names, _, _, _ = lancert.plan(env.ctx, [], None)
         self.assertEqual(names, [NAME])
+
+    def test_wildcard_covers_every_name_next_to_the_pi_and_says_what_that_means(self):
+        env = make(RULES + [(lancert.COVER_QUERY, 2)])
+        self.addCleanup(env.cleanup)
+        names, _, _, cert_names = lancert.plan(env.ctx, [], DNS_TOKEN)
+        self.assertEqual((names, cert_names), ([NAME], ['*.home.example.com']))   # the wildcard already includes the Pi's name
+        text = env.ui.text()
+        for part in ('nas.home.example.com', 'Not covered: home.example.com itself', 'copy both files',
+                     'This script does neither for you.', 'can pose as any name under home.example.com'):
+            self.assertIn(part, text)
+
+    def test_wildcard_stays_inside_the_zone(self):
+        self.assertEqual(lancert.wildcard_for('pi.home.example.com', 'example.com'), '*.home.example.com')
+        self.assertEqual(lancert.wildcard_for('pi.example.com', 'example.com'), '*.example.com')
+        for name, zone in (('example.com', 'example.com'), ('pi.home.example.com', None), ('pi.example.com', 'pi.example.com')):
+            self.assertIsNone(lancert.wildcard_for(name, zone))
 
 
 class IssueTests(unittest.TestCase):
@@ -92,6 +110,7 @@ class IssueTests(unittest.TestCase):
         self.assertNotIn(DNS_TOKEN, self.env.ui.text() + self.env.state_text())
         certbot = [a for a in self.argvs() if a.startswith('certbot certonly')][0]
         for part in ('--dns-cloudflare-credentials ' + lancert.CREDENTIALS_PATH, '--cert-name rwsols-lan', '-d ' + NAME,
+                     '--renew-with-new-domains',
                      '--non-interactive', '--agree-tos', '--email me@example.com', '--deploy-hook systemctl reload apache2'):
             self.assertIn(part, certbot)
         self.assertIn('ln -sfn /etc/letsencrypt/live/rwsols-lan/fullchain.pem /etc/apache2/ssl/wol.crt', self.argvs())
