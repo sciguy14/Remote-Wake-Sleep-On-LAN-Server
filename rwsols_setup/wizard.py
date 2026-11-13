@@ -41,7 +41,8 @@ TOKEN_PAGE = 'https://dash.cloudflare.com/profile/api-tokens'
 # Short keys for Cloudflare's "API token template URL" (a link that opens the Create Token form pre-filled):
 # https://developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/
 # dns, zone, access and access_acct are in Cloudflare's reference table. argotunnel (Cloudflare Tunnel) is not
-# listed there; the dashboard silently drops a key it does not know, which is why the wizard always tells the
+# listed there, but the dashboard accepted it when checked by hand in November 2026 (it ticked "Cloudflare
+# Tunnel: Edit"). The dashboard silently drops a key it does not know, which is why the wizard always tells the
 # user to compare the form with the printed list and then checks the pasted token itself.
 TEMPLATE_KEYS = [('argotunnel', 'edit'), ('dns', 'edit'), ('zone', 'read')]
 TEMPLATE_ACCESS_KEYS = [('access', 'edit'), ('access_acct', 'read')]
