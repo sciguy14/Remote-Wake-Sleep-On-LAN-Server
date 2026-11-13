@@ -76,6 +76,33 @@ def ddns_token_note(mode):
     return None if mode == 'tunnel' else (DDNS_TOKEN_NOTE_TITLE, DDNS_TOKEN_NOTE)
 
 
+DDNS_CLOUDFLARE_QUERY = 'Use Cloudflare to keep %s up to date?'
+DDNS_PROTOCOL_QUERY = 'Choose a DDNS Protocol.'
+DDNS_PROTOCOLS = ['dyndns2', 'noip', 'cloudflare', 'namecheap', 'zoneedit1', 'easydns', 'nfsn', 'yandex', 'ovh', 'dinahosting']
+
+
+def choose_ddns_protocol(ui, known=None):
+    """The ddclient protocol and, when it is already known, the Cloudflare zone: (protocol, zone or None).
+
+    `known` is the domain the Remote access section looked up ({'name', 'provider'}). A domain found on
+    Cloudflare there is not asked about again: Cloudflare is selected, unless the user wants dynamic DNS for
+    a different domain or through a different provider."""
+    name = (known or {}).get('name')
+    if name and known.get('provider') == 'cloudflare':
+        ui.explain('Your domain is on Cloudflare', [
+            'Earlier, this script found that DNS for %s is managed by Cloudflare, so dynamic DNS will update it through '
+            'Cloudflare. There is no provider to pick.' % name,
+            'Answer No only if dynamic DNS should update a different domain, or go through a different provider. You then '
+            'choose from the full list.'])
+        if ui.confirm(DDNS_CLOUDFLARE_QUERY % name, True):
+            ui.success('Using Cloudflare for %s.' % name)
+            return 'cloudflare', name
+    elif name:
+        ui.hint('DNS for %s is not managed by Cloudflare. Choose the protocol of the provider that manages it.' % name)
+    _, v = ui.choose(DDNS_PROTOCOL_QUERY, DDNS_PROTOCOLS)
+    return v, None
+
+
 def ddns_token_name(zone):
     return 'RWSOLS dynamic DNS (%s)' % zone if zone else 'RWSOLS dynamic DNS'
 
@@ -156,6 +183,7 @@ def cloudflare_availability(ctx, current_mode=None):
     option. The name that passed is remembered on ctx.cloudflare_base for the tunnel hostname suggestion."""
     ui = ctx.ui
     ctx.cloudflare_base = None
+    ctx.checked_domain = None    # the last domain looked up: {'name': zone, 'provider': 'cloudflare' or 'other'}
     ctx.address_kind = None      # answer to ADDRESS_QUERY, when it was asked
     st = load_state(ctx.state_path) or new_state()
     saved = st.get('tunnel', {}).get('hostname')
@@ -176,6 +204,8 @@ def cloudflare_availability(ctx, current_mode=None):
         """Look the name up and print what was found: the domain, its nameservers, and whether they are Cloudflare's."""
         ui.say('Checking %s ...' % name)
         c = dnscheck.check_domain(ctx.http, name)
+        if c.status in ('cloudflare', 'other'):
+            ctx.checked_domain = {'name': c.zone or c.name, 'provider': c.status}
         key = c.zone or c.name
         if key in seen:
             return c

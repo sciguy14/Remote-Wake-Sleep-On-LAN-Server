@@ -100,6 +100,7 @@ class ModeGateTests(unittest.TestCase):
         self.assertNotIn('Your domain, e.g. example.com', text)
         self.assertNotIn(SKIP, text)
         self.assertEqual(env.ctx.cloudflare_base, 'home.example.com')
+        self.assertEqual(env.ctx.checked_domain, {'name': 'example.com', 'provider': 'cloudflare'})   # kept for the dynamic DNS section
 
     def test_explains_that_the_ddns_method_does_not_matter(self):
         env = self.env(names=['home.example.com'])
@@ -154,6 +155,7 @@ class ModeGateTests(unittest.TestCase):
                      SKIP + ' DNS for elsewhere.example.net is not managed by Cloudflare'):
             self.assertIn(line, text)
         self.assertEqual(text.count(wizard.DOMAIN_QUERY), 1)      # a real domain elsewhere is accepted, not asked again
+        self.assertEqual(env.ctx.checked_domain, {'name': 'elsewhere.example.net', 'provider': 'other'})
 
     def fresh(self, rules):
         env = self.env(list(rules))
