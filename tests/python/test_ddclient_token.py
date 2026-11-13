@@ -8,6 +8,7 @@ DDCLIENT = '/etc/ddclient.conf'
 HOST = 'rwsols.example.com'
 DDNS_TOKEN = 'DDNSONLYTOKEN-0123456789abcdef'
 OFFER = 'Check whether the dynamic DNS token can be used?'
+PASTE = (wizard.RECHECK_QUERY, 2)
 
 
 def conf(token=API_TOKEN, protocol='cloudflare', login='token', extra=''):
@@ -47,13 +48,21 @@ class ParseTests(unittest.TestCase):
 
 
 class ReuseTests(unittest.TestCase):
-    def run_wizard(self, data, rules=(), secrets=(), token_env=False, access=False):
+    def run_wizard(self, data, rules=(), secrets=(), token_env=False, access=False, on_recheck=None):
         rules = [('Public hostname', HOST)] + list(rules)
         if access:
             rules += [('Enable Cloudflare Access', True), ('Emails allowed', 'me@example.com')]
         env = Env(rules, runner=runner_with(data), token=token_env, secrets=list(secrets))
         self.addCleanup(env.cleanup)
         env.cf.limited_tokens[DDNS_TOKEN] = ('cfd_tunnel', '/access/')
+        if on_recheck:
+            choose = env.ui.choose
+
+            def choosing(query, options, default=None):
+                if query == wizard.RECHECK_QUERY:
+                    on_recheck(env)
+                return choose(query, options, default)
+            env.ui.choose = choosing
         w = wizard.RemoteAccessWizard(env.ctx, 'tunnel', [], None)
         w.plan()
         w.prepare_cloud()
@@ -69,20 +78,45 @@ class ReuseTests(unittest.TestCase):
         self.assertEqual(set(env.cf.tokens_used), {API_TOKEN})
 
     def test_dns_only_token_reports_the_gap_and_falls_back_to_the_prompt(self):
-        env, w = self.run_wizard(conf(DDNS_TOKEN), secrets=[API_TOKEN])
+        env, w = self.run_wizard(conf(DDNS_TOKEN), rules=[PASTE], secrets=[API_TOKEN])
         text = env.ui.text()
         self.assertIn('The dynamic DNS token cannot be used as it is:', text)
         self.assertIn('it lacks the permission Account > Cloudflare Tunnel > Edit.', text)
-        self.assertNotIn('Access: Apps and Policies', text.split('cannot be used as it is:')[1].split('To reuse it')[0])
+        self.assertNotIn('Access: Apps and Policies', text.split('cannot be used as it is:')[1].split('To reuse this token')[0])
         self.assertIn('Cloudflare API token', env.ui.out)
         self.assertTrue(env.cf.tunnels)
         mutating = [t for t, c in zip(env.cf.tokens_used, env.cf.calls) if c[0] != 'GET']
         self.assertEqual(set(mutating), {API_TOKEN})         # the weak token never changed anything
 
     def test_access_permission_is_checked_only_when_access_is_wanted(self):
-        env, w = self.run_wizard(conf(DDNS_TOKEN), secrets=[API_TOKEN], access=True)
-        gap = env.ui.text().split('cannot be used as it is:')[1].split('To reuse it')[0]
+        env, w = self.run_wizard(conf(DDNS_TOKEN), rules=[PASTE], secrets=[API_TOKEN], access=True)
+        gap = env.ui.text().split('cannot be used as it is:')[1].split('To reuse this token')[0]
         self.assertIn('Account > Access: Apps and Policies > Edit', gap)
+
+    def test_check_again_after_adding_the_permission_uses_the_token(self):
+        # The user fixes the token in the Cloudflare dashboard while the wizard waits, then picks "check again".
+        env, w = self.run_wizard(conf(DDNS_TOKEN), on_recheck=lambda env: env.cf.limited_tokens.update({DDNS_TOKEN: ()}))
+        text = env.ui.text()
+        self.assertIn('The dynamic DNS token cannot be used as it is:', text)
+        self.assertIn('Checking the token again...', text)
+        self.assertIn('Using it; nothing to paste.', text)
+        self.assertNotIn('Cloudflare API token', env.ui.out)       # never asked to paste
+        self.assertTrue(env.cf.tunnels)
+        self.assertEqual(set(env.cf.tokens_used), {DDNS_TOKEN})
+
+    def test_check_again_without_fixing_asks_again_and_eventually_falls_back(self):
+        env, w = self.run_wizard(conf(DDNS_TOKEN), secrets=[API_TOKEN])   # default answer: check again, every time
+        text = env.ui.text()
+        self.assertEqual(env.ui.out.count(wizard.RECHECK_QUERY), wizard.MAX_TOKEN_RECHECKS)
+        self.assertIn('Still not usable', text)
+        self.assertIn('Cloudflare API token', env.ui.out)
+        self.assertTrue(env.cf.tunnels)
+
+    def test_ddns_step_note_names_the_tunnel_permission_and_the_later_chance(self):
+        note = ' '.join(wizard.DDNS_TOKEN_NOTE)
+        self.assertIn('Account > Cloudflare Tunnel > Edit', note)
+        self.assertIn('optional', note)
+        self.assertIn('lets you add the permission then', note)
 
     def test_declining_goes_straight_to_the_prompt(self):
         env, w = self.run_wizard(conf(), rules=[(OFFER, False)], secrets=[API_TOKEN])
@@ -99,7 +133,7 @@ class ReuseTests(unittest.TestCase):
         self.assertNotIn(OFFER, env.ui.text())
 
     def test_token_never_appears_in_output_state_or_config(self):
-        env, w = self.run_wizard(conf(DDNS_TOKEN), secrets=[API_TOKEN])
+        env, w = self.run_wizard(conf(DDNS_TOKEN), rules=[PASTE], secrets=[API_TOKEN])
         for blob in (env.ui.text(), env.state_text(), env.config()):
             self.assertNotIn(DDNS_TOKEN, blob)
             self.assertNotIn(API_TOKEN, blob)
