@@ -68,9 +68,9 @@ RECHECK_OPTIONS = ['I added the missing permission to the token. Check it again.
 MAX_TOKEN_RECHECKS = 10
 # Shown by the dynamic DNS step of setup.py when the user is about to create a Cloudflare token for ddclient.
 DDNS_TOKEN_NOTE = [
-    'Later in this setup you can choose Cloudflare Tunnel for remote access (no port forwarding). That step also needs '
-    'a Cloudflare API token, and it can reuse this one if the token has more permissions than dynamic DNS needs.',
-    'If you think you will use Cloudflare Tunnel, add these while you are creating the token:',
+    'You did not choose Cloudflare Tunnel for remote access. If you switch to it later (no port forwarding), its setup '
+    'also needs a Cloudflare API token, and it can reuse this one if the token has more permissions than dynamic DNS needs.',
+    'If you think you will switch, add these while you are creating the token:',
     '    Account > Cloudflare Tunnel > Edit',
     '  and, only if you also want the Cloudflare Access login in front of it:',
     '    Account > Access: Apps and Policies > Edit',
@@ -80,6 +80,24 @@ DDNS_TOKEN_NOTE = [
     'Trade-off: this token stays on the Pi for good, so extra permissions on it are stored here permanently. A separate '
     'token that you paste once at the tunnel step and delete afterwards is the tighter choice.',
 ]
+DDNS_TOKEN_NOTE_TITLE = 'If you switch to Cloudflare Tunnel later'
+
+
+def ddns_token_note(mode):
+    """(title, lines) to show while the user creates a dynamic DNS token, or None. With a tunnel already chosen
+    there is nothing to plan for: the tunnel was set up with its own token."""
+    return None if mode == 'tunnel' else (DDNS_TOKEN_NOTE_TITLE, DDNS_TOKEN_NOTE)
+
+
+def ddns_token_name(zone):
+    return 'RWSOLS dynamic DNS (%s)' % zone if zone else 'RWSOLS dynamic DNS'
+
+
+def ddns_token_url(zone):
+    """Link to Cloudflare's Create Token form, pre-filled with what ddclient needs (edit DNS, read the zone)."""
+    perms = json.dumps([{'key': 'dns', 'type': 'edit'}, {'key': 'zone', 'type': 'read'}], separators=(',', ':'))
+    return '%s?permissionGroupKeys=%s&accountId=%s&zoneId=all&name=%s' % (
+        TOKEN_PAGE, quote(perms, safe=''), quote('*', safe=''), quote(ddns_token_name(zone), safe=''))
 
 
 def _optional_domain(v):
@@ -162,9 +180,10 @@ def cloudflare_availability(ctx, current_mode=None):
     return False, reason
 
 
-def choose_mode(ctx):
+def choose_mode(ctx, heading=True):
     dflt = default_mode(ctx.repo_dir)
-    ctx.ui.heading('Remote access')
+    if heading:
+        ctx.ui.heading('Remote access')
     ctx.ui.explain('How will you reach RWSOLS from outside your home network?', MODE_HELP)
     available, reason = cloudflare_availability(ctx, dflt)
     order = list(MODE_ORDER)
@@ -255,12 +274,14 @@ class RemoteAccessWizard(object):
         self.account_id = None
         self._api = None
         self.notes = []
+        self.parts = ('mode', 'allowlist')
 
     # ----- planning (questions only; no side effects) -----
 
     def plan(self, parts=('mode', 'allowlist')):
         """Ask the questions. `parts` picks which: 'mode' (tunnel and Access, or removing an old tunnel) and
         'allowlist'. The setup checklist asks them as two separate sections; --remote-access asks both."""
+        self.parts = tuple(parts)
         if 'mode' in parts:
             self._plan_mode()
         if 'allowlist' in parts:
@@ -298,7 +319,8 @@ class RemoteAccessWizard(object):
     def _plan_tunnel(self):
         ui = self.ui
         ui.heading('Cloudflare Tunnel')
-        ui.say('cloudflared makes an outbound-only connection to Cloudflare. Remove any router port forwards for RWSOLS.')
+        ui.say('A small service on this Pi (cloudflared) connects out to Cloudflare, so no router ports are needed. '
+               'Leave any existing port forwards alone for now; the summary at the end says when they can go.')
         prev = self.st.get('tunnel', {})
         ddns_names = ddclient_hosts(self.ctx.runner)
         default_host = self.new['TUNNEL_HOSTNAME'] or prev.get('hostname')
@@ -781,11 +803,15 @@ class RemoteAccessWizard(object):
             warnings.append('Remove any router port forwards (80/443) that point at RWSOLS; they are no longer needed.'
                             if not dry else 'After a real run, remove any router port forwards (80/443) that point at RWSOLS.')
             if self.ctx.runner.path_exists('/etc/apache2/sites-enabled/000-default-le-ssl.conf'):
-                warnings.append('A Let\'s Encrypt certificate issued via certbot --apache renews over HTTP-01 on port 80, which will stop '
-                                'working once port 80 is closed. Switch to a DNS-01 challenge (e.g. a certbot DNS plugin) or use a self-signed LAN certificate.')
+                warnings.append('This Pi has a Let\'s Encrypt certificate that renews through port 80. It stops renewing once that port '
+                                'forward is gone. The tunnel address does not use it. The "HTTPS on your LAN" section of setup.py '
+                                'replaces it (trusted certificate by DNS challenge, self-signed, or plain HTTP).')
+            if not self.cfg.get('APPROVED_HASH'):
+                warnings.append('You cannot log in yet: no passphrase is set. The last section of setup.py ("Passphrase and '
+                                'computers") sets it.')
             if failures:
                 warnings.append('Some checks failed: ' + '; '.join(failures))
-        if self.new['ALLOWED_HOSTS']:
+        if self.new['ALLOWED_HOSTS'] and 'allowlist' in self.parts:
             lines.append(('Allowed hosts would be: ' if dry else 'Allowed hosts: ') + ', '.join(self.new['ALLOWED_HOSTS']))
             lines.append('TLS note: Apache still completes the TLS handshake for unlisted SNI names; the allowlist rejects them at the HTTP layer.')
         if lines or warnings:

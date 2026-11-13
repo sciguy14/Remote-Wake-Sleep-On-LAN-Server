@@ -205,7 +205,7 @@ class SetupScriptSectionTests(unittest.TestCase):
         sections.update(env.ctx, mode='tunnel')
         self.assertTrue(self.setup.section_ddns())
         text = env.ui.text()
-        self.assertIn('Dynamic DNS (optional)', text)
+        self.assertIn('Do you need it?', text)
         self.assertIn('RWSOLS itself does not need dynamic DNS', text)
         self.assertEqual(json.loads(env.state_text())['ddns'], 'none')
 
@@ -243,6 +243,30 @@ class SetupScriptSectionTests(unittest.TestCase):
         self.assertIn('is not needed with a tunnel', text)
         self.assertIn('can never get a certificate that browsers trust', text)
         self.assertEqual(self.setup.encryption_mode, 'dns')
+
+    def test_token_note_is_about_switching_later_and_absent_once_a_tunnel_is_chosen(self):
+        self.assertIsNone(wizard.ddns_token_note('tunnel'))
+        for mode in ('none', 'port_forward', None):
+            title, lines = wizard.ddns_token_note(mode)
+            self.assertIn('later', title)
+            self.assertNotIn('Later in this setup', ' '.join(lines))
+        url = wizard.ddns_token_url('example.com')
+        self.assertIn('RWSOLS%20dynamic%20DNS%20%28example.com%29', url)
+        self.assertNotIn('argotunnel', url)
+
+    def test_tunnel_section_summary_leaves_the_allowlist_to_its_own_section(self):
+        env = Env([('Public hostname', HOST)], config=fakes.FAKE_CONFIG.replace('?>', "$ALLOWED_HOSTS = array('raspberrypi.local');\n?>"))
+        self.addCleanup(env.cleanup)
+        w = wizard.RemoteAccessWizard(env.ctx, 'tunnel', [], None)
+        w.plan(parts=('mode',))
+        w.prepare_cloud()
+        w.write_config()
+        w.apply_local()
+        text = env.ui.text()
+        self.assertNotIn('Allowed hosts:', text)
+        self.assertNotIn('TLS note', text)
+        self.assertIn('You cannot log in yet: no passphrase is set.', text)
+        self.assertNotIn('Remove any router port forwards for RWSOLS.', text.split('Remote access summary')[0])
 
     def test_config_editor_is_the_last_section(self):
         self.assertEqual(sections.KEYS[-1], 'config')
