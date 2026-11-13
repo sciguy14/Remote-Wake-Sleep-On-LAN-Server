@@ -125,10 +125,16 @@ def remove_service(ctx):
 
 def check_origin_port(ctx, st, bind, port):
     """True if the port is free or already served by our own tunnel vhost."""
-    prev = st['tunnel']
-    if prev.get('origin_port') == port and prev.get('origin_bind') == bind and \
-            ctx.runner.path_exists(apache._enabled_path('site', apache.TUNNEL_SITE_NAME)):
-        return True
+    if ctx.runner.path_exists(apache._enabled_path('site', apache.TUNNEL_SITE_NAME)):
+        prev = st['tunnel']
+        if prev.get('origin_port') == port and prev.get('origin_bind') == bind:
+            return True
+        # The vhost file itself is the evidence, so this still holds when the state file is gone
+        # (deleted, or the folder was downloaded again).
+        site = ctx.runner.read_file(apache.TUNNEL_SITE_PATH) or b''
+        addr = '[%s]' % bind.strip('[]') if ':' in bind else bind
+        if ('Listen %s:%d' % (addr, port)) in site.decode('utf8', 'replace').splitlines():
+            return True
     return ctx.port_free(bind.strip('[]'), port)
 
 

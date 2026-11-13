@@ -178,6 +178,19 @@ class CreateTests(unittest.TestCase):
         w.plan()
         self.assertEqual(w.new['TUNNEL_ORIGIN_PORT'], 8081)
 
+    def test_own_listener_port_is_accepted_after_the_state_file_was_deleted(self):
+        env = Env(TUNNEL_RULES)
+        self.addCleanup(env.cleanup)
+        run_tunnel(env)
+        os.remove(env.ctx.state_path)
+        rerun_env(env, TUNNEL_RULES)
+        env.ctx.port_free = lambda b, p: p != 8080   # Apache holds it, for our own tunnel site
+        w = run_tunnel(env)
+        self.assertEqual(w.new['TUNNEL_ORIGIN_PORT'], 8080)
+        self.assertNotIn('already in use', env.ui.text())
+        self.assertEqual(len(env.cf.tunnels), 1)
+        self.assertEqual(len(env.cf.dns), 1)
+
 
 class AccessTests(unittest.TestCase):
     RULES = TUNNEL_RULES + [('Enable Cloudflare Access', True), ('Emails allowed', 'User@Example.com')]
