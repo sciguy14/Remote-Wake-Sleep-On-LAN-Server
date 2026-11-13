@@ -105,6 +105,25 @@ def _optional_domain(v):
     return _tunnel_hostname(v) if v else ''
 
 
+ADDRESS_QUERY = 'What address will you use to reach RWSOLS from outside your home?'
+ADDRESS_OPTIONS = [
+    'A domain of my own (for example example.com).',
+    'A free dynamic DNS name from a provider (for example myhome.ddns.net).',
+    'None. I only use RWSOLS at home (or over my own VPN).',
+]
+ADDRESS_KINDS = ('domain', 'ddns_service', 'none')
+ADDRESS_HELP = [
+    'To reach this Pi from outside your home you need an address that leads to it. There are two kinds:',
+    '    A domain of your own, such as example.com, that you registered and pay for. It works with every option below, '
+    'and it is the only kind that works with Cloudflare Tunnel.',
+    '    A free dynamic DNS name, such as myhome.ddns.net, handed out by a provider like No-IP or DuckDNS. It works with '
+    'port forwarding only, because the name belongs to the provider.',
+    'If you only use RWSOLS at home, you need neither.',
+]
+DDNS_SERVICE_REASON = ('A free dynamic DNS name belongs to its provider, so it cannot be used with Cloudflare. '
+                       'Port forwarding works with it.')
+
+
 def cloudflare_availability(ctx, current_mode=None):
     """Work out, before the mode question, whether Cloudflare Tunnel (and with it Access) can be offered.
 
@@ -114,9 +133,19 @@ def cloudflare_availability(ctx, current_mode=None):
     passed is remembered on ctx.cloudflare_base for the tunnel hostname suggestion."""
     ui = ctx.ui
     ctx.cloudflare_base = None
+    ctx.address_kind = None      # answer to ADDRESS_QUERY, when it was asked
     st = load_state(ctx.state_path) or new_state()
     saved = st.get('tunnel', {}).get('hostname')
     ddns = ddclient_hosts(ctx.runner)
+    if not saved and not ddns:
+        # Nothing is known about this install yet: ask what kind of address there is before talking about Cloudflare.
+        ui.explain('Your address', ADDRESS_HELP)
+        i, _ = ui.choose(ADDRESS_QUERY, ADDRESS_OPTIONS)
+        ctx.address_kind = ADDRESS_KINDS[i - 1]
+        if ctx.address_kind == 'ddns_service':
+            return False, DDNS_SERVICE_REASON
+        if ctx.address_kind == 'none':
+            return False, ''
     ui.explain('Is Cloudflare an option for you?', [
         'Cloudflare Tunnel and Cloudflare Access only work with a domain whose DNS is managed by Cloudflare: the domain\'s '
         'nameservers point at Cloudflare. The free Cloudflare plan is enough, and the domain can be registered anywhere.',
@@ -158,7 +187,7 @@ def cloudflare_availability(ctx, current_mode=None):
             ui.say('Your dynamic DNS names (%s) are not on Cloudflare. If you have another domain that is, enter it here.'
                    % ', '.join(ddns))
         while True:
-            name = ui.ask('Your domain, e.g. example.com (leave blank if you have none on Cloudflare)', None,
+            name = ui.ask('Your domain, e.g. example.com (leave blank to skip)', None,
                           validator=_optional_domain)
             if not name:
                 break
@@ -170,6 +199,7 @@ def cloudflare_availability(ctx, current_mode=None):
                 unknown = True
                 break
             failed.append(c)
+            ui.say('This domain works with port forwarding. Cloudflare Tunnel needs its DNS moved to Cloudflare first.')
             ui.say('Enter a different domain, or leave it blank to continue without Cloudflare.')
     if unknown:
         ui.hint('The Cloudflare options are shown anyway. The tunnel setup will stop with an error if the domain is not on Cloudflare.')
@@ -190,12 +220,23 @@ def choose_mode(ctx, heading=True):
         ctx.ui.heading('Remote access')
     ctx.ui.explain('How will you reach RWSOLS from outside your home network?', MODE_HELP)
     available, reason = cloudflare_availability(ctx, dflt)
+    kind = getattr(ctx, 'address_kind', None)
+    if kind == 'none':
+        ctx.ui.say('RWSOLS will only be reachable on your home network. Run this section again if that changes.')
+        return 'none'
     order = list(MODE_ORDER)
     if not available:
         order.remove('tunnel')
         ctx.ui.warn('Skipping the Cloudflare Tunnel and Cloudflare Access options. ' + reason)
-        ctx.ui.hint('To use them later: move the domain\'s DNS to Cloudflare (add the site in the Cloudflare dashboard and set the '
-                    'nameservers it shows you at your registrar), then run: python3 setup.py --remote-access')
+        if kind == 'ddns_service':
+            ctx.ui.hint('To use them later you need a domain of your own with its DNS on Cloudflare. Then run: '
+                        'python3 setup.py --remote-access')
+        else:
+            ctx.ui.hint('To use them later: move the domain\'s DNS to Cloudflare (add the site in the Cloudflare dashboard and set the '
+                        'nameservers it shows you at your registrar), then run: python3 setup.py --remote-access')
+    if kind and dflt == 'none':
+        # They said they have an address for outside use, so "LAN only" is not the natural default any more.
+        dflt = 'tunnel' if available and getattr(ctx, 'cloudflare_base', None) else 'port_forward'
     if dflt == 'port_forward':
         ctx.ui.hint('An existing port-forwarding based install was detected, so that is the default.')
     i, _ = ctx.ui.choose('Choose a remote access mode.', [MODE_LABELS[m] for m in order], order.index(dflt) + 1)

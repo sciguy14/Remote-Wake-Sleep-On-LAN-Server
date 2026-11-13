@@ -125,11 +125,49 @@ class ModeGateTests(unittest.TestCase):
     def test_wrong_domain_is_reasked_until_blank(self):
         env = self.env([('Your domain, e.g. example.com', ['elsewhere.example.net', 'nothing-here.example.org', ''])])
         os.remove(env.config_path)
-        self.assertEqual(wizard.choose_mode(env.ctx), 'none')
+        self.assertEqual(wizard.choose_mode(env.ctx), 'port_forward')
         self.assertEqual(len(self.labels()), 2)
+        self.assertIn('This domain works with port forwarding.', env.ui.text())
         text = env.ui.text()
         self.assertIn('nothing-here.example.org does not appear to be a registered domain', text)
         self.assertIn(SKIP, text)
+
+    def fresh(self, rules):
+        env = self.env(rules)
+        os.remove(env.config_path)
+        return env
+
+    def test_fresh_install_is_asked_what_kind_of_address_it_has_first(self):
+        env = self.fresh([('Your domain, e.g. example.com', 'example.com')])
+        self.assertEqual(wizard.choose_mode(env.ctx), 'tunnel')   # own domain on Cloudflare: the tunnel is the default
+        text = env.ui.text()
+        self.assertLess(text.index(wizard.ADDRESS_QUERY), text.index('Is Cloudflare an option for you?'))
+        self.assertIn('Checking who manages DNS for example.com ...', text)
+        self.assertIn('DNS for example.com is managed by Cloudflare. Cloudflare Tunnel is available.', text)
+        self.assertEqual(self.offered[0], wizard.ADDRESS_OPTIONS)
+
+    def test_free_dynamic_dns_name_means_port_forwarding_and_no_cloudflare_questions(self):
+        env = self.fresh([(wizard.ADDRESS_QUERY, 2)])
+        self.assertEqual(wizard.choose_mode(env.ctx), 'port_forward')
+        self.assertEqual(self.labels(), [wizard.MODE_LABELS['none'], wizard.MODE_LABELS['port_forward']])
+        text = env.ui.text()
+        self.assertIn(SKIP + ' A free dynamic DNS name belongs to its provider', text)
+        self.assertIn('you need a domain of your own', text)
+        self.assertNotIn('Your domain, e.g. example.com', text)
+        self.assertNotIn('Is Cloudflare an option for you?', text)
+
+    def test_home_only_skips_every_other_question(self):
+        env = self.fresh([(wizard.ADDRESS_QUERY, 3)])
+        self.assertEqual(wizard.choose_mode(env.ctx), 'none')
+        self.assertEqual(len(self.offered), 1)
+        text = env.ui.text()
+        self.assertNotIn(SKIP, text)
+        self.assertNotIn('Choose a remote access mode', text)
+
+    def test_known_dynamic_dns_names_skip_the_address_question(self):
+        env = self.env(names=['home.example.com'])
+        wizard.choose_mode(env.ctx)
+        self.assertNotIn(wizard.ADDRESS_QUERY, env.ui.text())
 
     def test_no_domain_at_all(self):
         env = self.env()
