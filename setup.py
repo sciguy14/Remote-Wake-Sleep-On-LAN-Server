@@ -38,7 +38,6 @@ script_dir = pathlib.Path(__file__).parent.absolute()
 public_ipv4 = "127.0.0.1"
 urls = []
 encryption_mode="none" # Options: "none","self","certbot","dns","skip"
-dns_cert_wildcard = None # The wildcard name (*.home.example.com) on that certificate, when one was chosen
 dns_cert_names = [] # LAN name(s) on the DNS-challenge certificate, when that option was chosen in this run
 ddns_temp_config=pathlib.Path('/tmp/ddclient.conf')
 ddns_real_config=pathlib.Path('/etc/ddclient.conf')
@@ -275,12 +274,11 @@ def section_ddns():
 
 # Section 4: how the Pi's own web server is encrypted (certificates)
 def section_https():
-    global urls, encryption_mode, dns_cert_names, dns_cert_wildcard
+    global urls, encryption_mode, dns_cert_names
     from rwsols_setup import sections
     mode = current_mode()
     urls = []
     dns_cert_names = []
-    dns_cert_wildcard = None
     encryption_mode = "skip"
     if mode == "port_forward":
         # Public names: find out what is being served on ports 80/443 to offer the right choices
@@ -301,7 +299,7 @@ def section_https():
     else:
         ui.say("No Apache2 encryption setting changes will be made.\n")
     if encryption_mode != "skip":
-        sections.update(ctx, https={'kind': encryption_mode, 'names': list(dns_cert_names), 'wildcard': dns_cert_wildcard})
+        sections.update(ctx, https={'kind': encryption_mode, 'names': list(dns_cert_names)})
 
     # config.php needs to know whether to send visitors to HTTPS
     if not _set_use_https():
@@ -784,7 +782,7 @@ def _08_selfcert_setup():
 
 # Alternate Setup Step 8: A browser-trusted certificate for a LAN name, from Let's Encrypt, using a DNS challenge at Cloudflare (no open port needed)
 def _08_dnscert_setup():
-    global urls, dns_cert_names, dns_cert_wildcard
+    global urls, dns_cert_names
     from rwsols_setup import lancert, wizard
     from rwsols_setup.errors import SetupError
     token = None
@@ -792,9 +790,9 @@ def _08_dnscert_setup():
         # Names the LAN's own DNS already gives this Pi are the natural candidates
         helper = wizard.RemoteAccessWizard(ctx, current_mode(), [], get_local_ip() or None)
         candidates = helper._search_domain_candidates() + [n for n in [helper._reverse_dns_candidate()] if n]
-        names, email, token, cert_names = lancert.plan(ctx, candidates, wizard.ddclient_cloudflare_token(ctx.runner))
+        names, email, token = lancert.plan(ctx, candidates, wizard.ddclient_cloudflare_token(ctx.runner))
         ui.say("Requesting the certificate. This takes about a minute...")
-        lancert.issue(ctx, cert_names, email, token)
+        lancert.issue(ctx, names, email, token)
     except SetupError as e:
         ui.warn("The trusted certificate could not be set up.")
         ui.warn(str(e))
@@ -821,12 +819,7 @@ def _08_dnscert_setup():
         return False
     urls = list(names)
     dns_cert_names = list(names)
-    dns_cert_wildcard = cert_names[0] if cert_names[0].startswith('*.') else None
     ui.success("https://" + names[0] + " now has a trusted certificate. It renews by itself.")
-    if dns_cert_wildcard:
-        ui.info("The certificate covers " + dns_cert_wildcard + ". To use it on another device, copy these two files from this Pi (as root), and again after each renewal:")
-        ui.say("    " + lancert.LIVE_DIR + "/fullchain.pem")
-        ui.say("    " + lancert.LIVE_DIR + "/privkey.pem   (keep this one secret)")
     ui.hint("If the hostname allowlist is on, add " + names[0] + " to it (the Hostname allowlist section offers it).")
     return True
 
