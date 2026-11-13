@@ -218,6 +218,7 @@ class RemoteAccessWizard(object):
         self.method = None
         self.tunnel_name = 'rwsols'
         self.access_mode = 'off'
+        self.session = access.DEFAULT_SESSION
         self.identities = ([], [])
         self.want_service_token = False
         self.manual_token = None
@@ -329,6 +330,7 @@ class RemoteAccessWizard(object):
         if self.method == 'automatic':
             self.access_mode = 'automatic'
             self.identities = access.ask_identities(ui)
+            self.session = access.ask_session_duration(ui, self.st.get('access', {}).get('session_duration'))
             ui.explain('Service token', [
                 'A service token lets a script or app (not a person in a browser) pass the Access login by sending two headers. '
                 'Say yes only if you have such a client. The secret is shown once at the end and never stored.'])
@@ -585,7 +587,7 @@ class RemoteAccessWizard(object):
         self.account_id = prov.account_id
         if self.access_mode == 'automatic':
             ap = access.AccessProvisioner(self.ctx, api, st, prov.account_id, h)
-            team, aud, tok = ap.run(self.identities[0], self.identities[1], self.want_service_token)
+            team, aud, tok = ap.run(self.identities[0], self.identities[1], self.want_service_token, self.session)
             self.new.update(ACCESS_TEAM_DOMAIN=team, ACCESS_AUD=aud)
             self.service_token = tok
         elif st.get('access', {}).get('app_created') and st['access'].get('app_id'):

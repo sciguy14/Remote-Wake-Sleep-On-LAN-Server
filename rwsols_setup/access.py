@@ -8,6 +8,9 @@ TEAM_DOMAIN_RE = re.compile(r'^[a-z0-9][a-z0-9-]*\.cloudflareaccess\.com$')
 AUD_RE = re.compile(r'^[0-9a-f]{64}$')
 EMAIL_RE = re.compile(r'^[^@\s,]+@[^@\s,]+\.[^@\s,]+$')
 DOMAIN_RE = re.compile(r'^(?!-)[a-z0-9-]+(\.[a-z0-9-]+)+$')
+SESSION_QUERY = 'How long should a login last?'
+SESSION_CHOICES = [('1 day', '24h'), ('1 week', '168h'), ('1 month', '720h')]   # label, Cloudflare duration
+DEFAULT_SESSION = '720h'
 
 
 def validate_team_domain(v):
@@ -53,6 +56,19 @@ def ask_identities(ui):
             ui.warn(str(e))
 
 
+def ask_session_duration(ui, current=None):
+    """How long a browser stays logged in to Access before the emailed code is asked for again."""
+    values = [v for _, v in SESSION_CHOICES]
+    ui.explain('Login length', [
+        'After someone logs in with the emailed code, that browser stays logged in for this long. Then Cloudflare asks '
+        'for a new code.',
+        'Longer means fewer codes to type. Shorter means a browser that someone else gets hold of stops working sooner. '
+        'The RWSOLS passphrase is still asked for either way.'])
+    default = values.index(current if current in values else DEFAULT_SESSION) + 1
+    i, _ = ui.choose(SESSION_QUERY, [label for label, _ in SESSION_CHOICES], default)
+    return values[i - 1]
+
+
 def ask_manual(ui):
     ui.explain('Cloudflare Access values', [
         'In the Cloudflare Zero Trust dashboard (Access > Applications), add a Self-hosted application for your tunnel',
@@ -68,6 +84,7 @@ class AccessProvisioner(object):
         self.ctx, self.api, self.st = ctx, api, st
         self.acct, self.hostname = account_id, hostname
         self.a = st['access']
+        self.session = DEFAULT_SESSION
 
     def team_domain(self):
         try:
@@ -95,8 +112,10 @@ class AccessProvisioner(object):
         existing = self._find_policy(name)
         if existing:
             ours = self.a.get(state_key) == existing.get('id')
-            if ours and (existing.get('include') != include or existing.get('decision') != decision):
-                self.api.mutate('PUT', '%s/%s' % (base, existing['id']), {'name': name, 'decision': decision, 'include': include}, {})
+            if ours and (existing.get('include') != include or existing.get('decision') != decision
+                         or existing.get('session_duration') != self.session):
+                self.api.mutate('PUT', '%s/%s' % (base, existing['id']),
+                                {'name': name, 'decision': decision, 'include': include, 'session_duration': self.session}, {})
                 self.ctx.ui.say('Updated Access policy %r.' % name)
             elif not ours and existing.get('include') != include:
                 self.ctx.ui.warn('Access policy %r already exists and differs from your answers; it was not modified.' % name)
@@ -104,7 +123,7 @@ class AccessProvisioner(object):
             if not ours:
                 self.a[state_key + '_created'] = False
             return existing['id']
-        res = self.api.mutate('POST', base, {'name': name, 'decision': decision, 'include': include, 'session_duration': '24h'},
+        res = self.api.mutate('POST', base, {'name': name, 'decision': decision, 'include': include, 'session_duration': self.session},
                               {'id': '<new-policy-id>'})
         self.a[state_key] = res['id']
         self.a[state_key + '_created'] = True
@@ -119,16 +138,29 @@ class AccessProvisioner(object):
                 app = x
                 break
         if app:
+            ours = app.get('id') == self.a.get('app_id') and self.a.get('app_created')
             if app.get('id') != self.a.get('app_id'):
                 self.a['app_created'] = False
             self.ctx.ui.say('Using existing Access application for %s.' % self.hostname)
+            if app.get('session_duration') != self.session:
+                if ours:
+                    # PUT replaces the application, so send back what it already has with only the session changed.
+                    body = {k: app[k] for k in ('type', 'name', 'domain', 'destinations') if k in app}
+                    body['policies'] = [{'id': p['id'], 'precedence': p.get('precedence', i + 1)} if isinstance(p, dict) else p
+                                        for i, p in enumerate(app.get('policies') or [])]
+                    body['session_duration'] = self.session
+                    self.api.mutate('PUT', '%s/%s' % (base, app['id']), body, {})
+                    self.ctx.ui.say('Updated the login length of the Access application.')
+                else:
+                    self.ctx.ui.warn('The existing Access application was not created by this wizard, so its login length '
+                                     '(%s) was not changed. Change it in the dashboard if intended.' % app.get('session_duration'))
             attached = set(p.get('id') if isinstance(p, dict) else p for p in app.get('policies') or [])
             for pid in policy_ids:
                 if pid not in attached:
                     self.ctx.ui.warn('Policy %s is not attached to the existing Access application; attach it in the dashboard if intended.' % pid)
         else:
             body = {'type': 'self_hosted', 'name': 'RWSOLS (%s)' % self.hostname, 'domain': self.hostname,
-                    'destinations': [{'type': 'public', 'uri': self.hostname}], 'session_duration': '24h',
+                    'destinations': [{'type': 'public', 'uri': self.hostname}], 'session_duration': self.session,
                     'policies': [{'id': pid, 'precedence': i + 1} for i, pid in enumerate(policy_ids)]}
             app = self.api.mutate('POST', base, body, {'id': '<new-app-id>', 'aud': '0' * 64})
             self.a['app_created'] = True
@@ -147,8 +179,9 @@ class AccessProvisioner(object):
         self.a['service_token_created'] = True
         return res
 
-    def run(self, emails, domains, want_service_token):
+    def run(self, emails, domains, want_service_token, session=DEFAULT_SESSION):
         """Returns (team_domain, aud, service_token_result_or_None)."""
+        self.session = session
         team = self.team_domain()
         ids = [self.ensure_policy('RWSOLS %s allow' % self.hostname, 'allow', self._include(emails, domains), 'policy_id')]
         tok = None
@@ -158,7 +191,7 @@ class AccessProvisioner(object):
                 ids.append(self.ensure_policy('RWSOLS %s service auth' % self.hostname, 'non_identity',
                                               [{'service_token': {'token_id': self.a['service_token_id']}}], 'svc_policy_id'))
         aud = self.ensure_app(ids)
-        self.a.update({'enabled': True, 'team_domain': team})
+        self.a.update({'enabled': True, 'team_domain': team, 'session_duration': session})
         save_state(self.ctx, self.st)
         return team, aud, tok
 
