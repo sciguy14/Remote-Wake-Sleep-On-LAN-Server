@@ -43,6 +43,7 @@ class FakeRunner(object):
         self.groups = {'www-data'}
         self.stat_out = 'root:root 644'
         self.found = []          # what `find` prints
+        self.rc = {}             # (argv[0], argv[1]) -> exit code, to make any other command fail
 
     def apt_config(self):
         """`apt-config dump` output derived from the apt.conf.d files written so far."""
@@ -111,6 +112,8 @@ class FakeRunner(object):
             self.packages.add(argv[-1])
         elif argv[:1] == ['tee']:
             self.files[argv[1]] = (input.encode() if isinstance(input, str) else input, None)
+        if tuple(argv[:2]) in self.rc:
+            rc = self.rc[tuple(argv[:2])]
         if check and rc != 0:
             from rwsols_setup.errors import CommandError
             raise CommandError('failed: ' + ' '.join(argv))
@@ -309,6 +312,7 @@ class ScriptedUI(object):
         self.secrets = list(secrets or [])
         self.out = []
         self.many_calls = []     # dicts: query, options, result
+        self.choices = []        # (query, options) of every choose()
 
     def _match(self, prompt):
         for sub, ans in self.rules:
@@ -365,6 +369,7 @@ class ScriptedUI(object):
 
     def choose(self, query, options, default=None):
         self.out.append(query)
+        self.choices.append((query, list(options)))
         hit, ans = self._match(query)
         i = ans if hit else (default or 1)
         return i, options[i - 1]
