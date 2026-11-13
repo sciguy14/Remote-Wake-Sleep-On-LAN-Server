@@ -35,6 +35,23 @@ ACCESS_SCOPES = [
     'Account > Access: Organizations, Identity Providers, and Groups > Read',
     'Account > Access: Service Tokens > Edit   (only if you want a service token)',
 ]
+RECHECK_QUERY = 'What would you like to do about the dynamic DNS token?'
+RECHECK_OPTIONS = ['I added the missing permission to the token. Check it again.', 'Paste a different API token instead.']
+MAX_TOKEN_RECHECKS = 10
+# Shown by the dynamic DNS step of setup.py when the user is about to create a Cloudflare token for ddclient.
+DDNS_TOKEN_NOTE = [
+    'Later in this setup you can choose Cloudflare Tunnel for remote access (no port forwarding). That step also needs '
+    'a Cloudflare API token, and it can reuse this one if the token has more permissions than dynamic DNS needs.',
+    'If you think you will use Cloudflare Tunnel, add these while you are creating the token:',
+    '    Account > Cloudflare Tunnel > Edit',
+    '  and, only if you also want the Cloudflare Access login in front of it:',
+    '    Account > Access: Apps and Policies > Edit',
+    '    Account > Access: Organizations, Identity Providers, and Groups > Read',
+    'This is optional. If you skip it, the tunnel step checks the token, tells you what is missing, and lets you add '
+    'the permission then (editing a token does not change its value) or paste a separate token.',
+    'Trade-off: this token stays on the Pi for good, so extra permissions on it are stored here permanently. A separate '
+    'token that you paste once at the tunnel step and delete afterwards is the tighter choice.',
+]
 
 
 def _optional_domain(v):
@@ -522,15 +539,25 @@ class RemoteAccessWizard(object):
         if not ui.confirm('Check whether the dynamic DNS token can be used?', True):
             return None
         api = CloudflareAPI(token, self.ctx.http, ui, self.ctx.dry_run)
-        gaps = self._token_gaps(api)
-        if not gaps:
-            ui.success('The dynamic DNS token has the permissions this needs. Using it; nothing to paste.')
-            return api
-        ui.warn('The dynamic DNS token cannot be used as it is:')
-        for g in gaps:
-            ui.warn('  - ' + g)
-        ui.say('To reuse it, add the missing permission in the Cloudflare dashboard (My Profile > API Tokens > Edit on that '
-               'token) and run this again. Or paste a different token now.')
+        for _ in range(MAX_TOKEN_RECHECKS):
+            gaps = self._token_gaps(api)
+            if not gaps:
+                ui.success('The dynamic DNS token has the permissions this needs. Using it; nothing to paste.')
+                return api
+            ui.warn('The dynamic DNS token cannot be used as it is:')
+            for g in gaps:
+                ui.warn('  - ' + g)
+            ui.explain('To reuse this token', [
+                'Leave this window open and add the missing permission in a browser:',
+                '  1. Open https://dash.cloudflare.com/profile/api-tokens',
+                '  2. On the token ddclient uses, open the "..." menu and choose Edit.',
+                '  3. Add the permission(s) listed above, then "Continue to summary" and "Update token".',
+                'The token value does not change, so nothing needs editing on this Pi. Then come back and check again.',
+                'Or skip this and paste a different token.'])
+            if ui.choose(RECHECK_QUERY, RECHECK_OPTIONS)[0] != 1:
+                return None
+            ui.say('Checking the token again...')
+        ui.warn('Still not usable after %d checks. Continuing with a pasted token.' % MAX_TOKEN_RECHECKS)
         return None
 
     def prepare_cloud(self):

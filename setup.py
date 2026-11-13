@@ -317,6 +317,8 @@ def _04_setup_ddns():
                         f.write('login=token\n') # Cloudflare requires the use of an API token, so no username is entered.
                         ui.say("\nFollow the instructions at this link to create an API token for your cloudflare account. It must have the permissions shown in the screenshot.")
                         ui.say("https://github.com/sciguy14/Remote-Wake-Sleep-On-LAN-Server/wiki/Notes-and-FAQs#cloudflare-ddns")
+                        from rwsols_setup.wizard import DDNS_TOKEN_NOTE
+                        ui.explain('Planning to use Cloudflare Tunnel too?', DDNS_TOKEN_NOTE)
                         v = ui.ask_secret('\nEnter the generated cloudflare API token', strip=False)
                         f.write('password=' + v + '\n')
                     else:
