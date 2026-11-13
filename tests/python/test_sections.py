@@ -7,7 +7,7 @@ import warnings
 import fakes
 from fakes import API_TOKEN, Env, FakeRunner
 
-from rwsols_setup import sections, wizard
+from rwsols_setup import apache, reset, sections, tunnel, wizard
 from rwsols_setup.state import default_mode
 
 HOST = 'rwsols.example.com'
@@ -71,6 +71,85 @@ class ChecklistTests(unittest.TestCase):
         self.assertTrue(all(st['sections'][k] for k in sections.KEYS))
         self.assertNotIn('Nothing is set up yet.', env.ui.text())
 
+    def configured(self, with_tunnel=False):
+        env = self.env(config=HASHED.replace('?>', "$COMPUTER_NAME = array('Desktop');\n$ALLOWED_HOSTS = array('raspberrypi.local');\n?>"))
+        legacy(env)
+        with open(os.path.join(fakes.ROOT, 'www', 'html', 'config_sample.php'), newline='') as f:
+            self.sample = f.read()
+        with open(os.path.join(os.path.dirname(env.config_path), 'config_sample.php'), 'w', newline='') as f:
+            f.write(self.sample)
+        r = env.runner
+        r.files[reset.SERVED_CONFIG] = (b'old', '0640')
+        r.files[apache.ALLOWED_CONF_PATH] = (b'x', '0644')
+        if with_tunnel:
+            r.files[tunnel.SERVICE_PATH] = (b'unit', '0644')
+            r.files[tunnel.ENV_PATH] = (b'TUNNEL_TOKEN=x', '0600')
+            r.files[apache.TUNNEL_SITE_PATH] = (b'Listen 127.0.0.1:8080', '0644')
+            with open(env.ctx.state_path, 'w') as f:
+                json.dump({'mode': 'tunnel', 'tunnel': {'id': 'abc', 'hostname': HOST, 'created_tunnel': True}, 'access': {},
+                           'sections': dict((k, True) for k in sections.KEYS)}, f)
+        return env
+
+    def menu(self, env, answers):
+        """Answer the main menu with `answers` in turn; every other choice takes its default."""
+        self.menus = []
+        real = env.ui.choose
+
+        def choose(query, options, default=None):
+            if query == sections.MENU_QUERY:
+                self.menus.append(list(options))
+                i = answers.pop(0)
+                return i, options[i - 1]
+            return real(query, options, default)
+        env.ui.choose = choose
+
+    def test_menu_offers_to_start_over_and_no_is_the_default(self):
+        env = self.configured()
+        self.menu(env, [2, 3])      # complete install: redo, start over, quit
+        before = env.config()
+        rec = Recorder(env)
+        self.assertTrue(sections.run(env.ctx, rec.runners))
+        self.assertEqual(self.menus[0][1], sections.RESET_OPTION)
+        text = env.ui.text()
+        self.assertIn('Nobody can log in to RWSOLS until you finish setup again.', text)
+        self.assertIn('Nothing was changed.', text)
+        self.assertEqual(env.config(), before)
+        self.assertEqual(rec.ran, [])
+
+    def test_start_over_resets_settings_keeps_a_backup_and_walks_every_section_again(self):
+        env = self.configured(with_tunnel=True)
+        env.make_ctx([(reset.CONFIRM_QUERY, True)])
+        self.menu(env, [2])
+        old = env.config()
+        rec = Recorder(env)
+        self.assertTrue(sections.run(env.ctx, rec.runners))
+        self.assertEqual(rec.ran, sections.KEYS)                    # everything is asked again, in order
+        r = env.runner
+        for gone in (tunnel.SERVICE_PATH, tunnel.ENV_PATH, apache.TUNNEL_SITE_PATH, apache.ALLOWED_CONF_PATH):
+            self.assertNotIn(gone, r.files)
+        self.assertIn(['cp', os.path.join(os.path.dirname(env.config_path), 'config_sample.php'), reset.SERVED_CONFIG], r.argvs())
+        backups = [f for f in os.listdir(env.dir) if f.startswith(reset.BACKUP_PREFIX)]
+        self.assertEqual(len(backups), 1)
+        with open(os.path.join(env.dir, backups[0]), newline='') as f:
+            self.assertEqual(f.read(), old)
+        self.assertFalse(any(os.path.exists(os.path.join(env.dir, n)) for n in sections.LEGACY_DOT_FILES))
+        text = env.ui.text()
+        self.assertIn('in your Cloudflare account are NOT removed', text)
+        self.assertIn('Reset done', text)
+        self.assertNotIn(reset.DDNS_QUERY, text)                     # no ddclient configuration here, so no question
+        self.assertNotIn('ddclient', ' '.join(' '.join(a) for a in r.argvs()))
+
+    def test_start_over_leaves_dynamic_dns_alone_unless_asked(self):
+        for answer, moved in ((False, False), (True, True)):
+            env = self.configured()
+            env.runner.files[reset.DDCLIENT_CONF] = (b'protocol=dyndns2\nhome.example.net\n', '0600')
+            env.make_ctx([(reset.CONFIRM_QUERY, True), (reset.DDNS_QUERY, answer)])
+            self.assertTrue(reset.run(env.ctx, None))
+            self.assertEqual(['mv', '-f', reset.DDCLIENT_CONF, reset.DDCLIENT_BACKUP] in env.runner.argvs(), moved)
+            self.assertNotIn('in your Cloudflare account', env.ui.text())
+            with open(env.config_path, newline='') as f:
+                self.assertEqual(f.read(), self.sample)
+
     def test_stopping_part_way_continues_where_it_left_off(self):
         env = self.env()
         rec = Recorder(env, fail=['https'])
@@ -87,7 +166,7 @@ class ChecklistTests(unittest.TestCase):
     def test_one_section_can_be_run_again(self):
         env = self.env(config=HASHED)
         legacy(env)
-        answers = [1, 2]                          # first menu: "Run one section again"; second menu: Quit
+        answers = [1, 3]                          # first menu: "Run one section again"; second menu: Quit
 
         def menu(query, options, default=None):
             if query == sections.MENU_QUERY:

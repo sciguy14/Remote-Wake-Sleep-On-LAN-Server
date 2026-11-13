@@ -56,6 +56,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Remote-Wake-Sleep-On-LAN-Server (RWSOLS) setup script')
     parser.add_argument('--remote-access', action='store_true', help='Only run the remote access part (mode, hostname allowlist, Cloudflare Tunnel/Access).')
     parser.add_argument('--remove-tunnel', action='store_true', help='Remove the Cloudflare Tunnel setup created by this script.')
+    parser.add_argument('--reset', action='store_true', help='Put the RWSOLS settings back to their defaults (after asking) and start setup over.')
     parser.add_argument('--auto-updates', action='store_true', help='Only run the automatic security updates step (unattended-upgrades).')
     parser.add_argument('--dry-run', action='store_true', help='With --remote-access/--remove-tunnel: print what would be done and change nothing (read-only API calls still happen).')
     parser.add_argument('--force', action='store_true', help='With --remote-access: replace a conflicting DNS record for the tunnel hostname.')
@@ -120,6 +121,17 @@ def main():
         'updates': section_updates,
         'config': section_config,
     }
+    # --reset: wipe the settings first (it asks before changing anything), then carry on with the now-empty checklist
+    if args.reset:
+        from rwsols_setup import reset
+        from rwsols_setup.state import load_state
+        try:
+            if not reset.run(ctx, load_state(ctx.state_path)):
+                return
+        except (SetupError, OSError) as e:
+            ui.error("\n" + str(e))
+            sys.exit(1)
+
     # Keep a configuration file written by an earlier version of this script current (no questions asked)
     try:
         from rwsols_setup import hardening
