@@ -37,7 +37,8 @@ signal.signal(signal.SIGINT, signal_handler)
 script_dir = pathlib.Path(__file__).parent.absolute()
 public_ipv4 = "127.0.0.1"
 urls = []
-encryption_mode="none" # Options: "none","self","certbot","skip"
+encryption_mode="none" # Options: "none","self","certbot","dns","skip"
+dns_cert_names = [] # LAN name(s) on the DNS-challenge certificate, when that option was chosen in this run
 ddns_temp_config=pathlib.Path('/tmp/ddclient.conf')
 ddns_real_config=pathlib.Path('/etc/ddclient.conf')
 rwsols_config_sample = script_dir.joinpath('www/html/config_sample.php')
@@ -46,6 +47,9 @@ remote_mode = "port_forward" # Options: "none","port_forward","tunnel" (how RWSO
 
 # The wizard UI (rich when available on a TTY, plain text otherwise). Created in main().
 ui = None
+
+# Shared context for the rwsols_setup package (command runner, HTTP, state file). Created in main().
+ctx = None
 
 # Command line options
 def parse_args():
@@ -66,11 +70,11 @@ def make_context(args):
 
 # Main Logic
 def main():
-    global urls, remote_mode, ui
+    global urls, remote_mode, ui, ctx
     args = parse_args()
     ui_mod.bootstrap_rich(skip=args.dry_run)
     ui = ui_mod.select_ui()
-    from rwsols_setup import wizard
+    from rwsols_setup import sections, wizard
     from rwsols_setup.errors import SetupError
     ctx = make_context(args)
 
@@ -84,6 +88,9 @@ def main():
                 wizard.run_remove_tunnel(ctx, copy_webroot=_12_copy_webroot)
             else:
                 wizard.run_remote_access(ctx, urls, get_local_ip() or None, copy_webroot=_12_copy_webroot)
+                if not args.dry_run:
+                    sections.mark_done(ctx, 'remote')
+                    sections.mark_done(ctx, 'allowlist')
         except SetupError as e:
             ui.error("\n" + str(e))
             sys.exit(1)
@@ -102,83 +109,184 @@ def main():
     ui.pause("If you have read and understood what this script is doing, Press Enter to continue with the automatic setup.")
     ui.say("")
 
-    # Add note about skipping completed steps
-    ui.hint("Note: One-time steps that have already been executed will be automatically skipped.")
-    ui.hint("If you need to re-run them, delete the relevant dot files in this folder.\n")
-    time.sleep(1)
+    # The setup is a checklist of sections. It shows what is done and what is left, runs the rest in order,
+    # and lets any one section be run again later.
+    runners = {
+        'base': section_base,
+        'remote': section_remote,
+        'ddns': section_ddns,
+        'https': section_https,
+        'allowlist': section_allowlist,
+        'updates': section_updates,
+        'config': section_config,
+    }
+    if not sections.run(ctx, runners, lambda: wizard.ddclient_hosts(ctx.runner)):
+        sys.exit(1)
 
-    # Install prerequisites
-    run_step('_01_install_prereqs', 'Install Prerequisite Software')
 
-    # Ping Permissions
-    run_step('_02_ping_permissions', 'Grant Ping Permission')
+# ---------------------------------------------------------------------------------------------------------
+# Sections of the setup checklist (order and status tracking live in rwsols_setup/sections.py).
+# Each returns True when it finished.
+# ---------------------------------------------------------------------------------------------------------
 
-    # Copy our web files to the Apache webroot
-    run_step('_03_copy_webroot', 'Copy Unconfigured Webroot', False)
+# The remote access mode chosen in the "Remote access" section ("none" until one is chosen)
+def current_mode():
+    from rwsols_setup import sections
+    return sections.load(ctx).get('mode') or 'none'
 
-    # How will RWSOLS be reached from outside the LAN?
-    remote_mode = wizard.choose_mode(ctx)
+# Section 1: packages, permissions, PHP hardening, a default config.php and the web files
+def section_base():
+    from rwsols_setup import sections
+    again = bool(sections.load(ctx)['sections'].get('base')) # Chosen from "Run one section again": redo the one-time steps too
+    run_step('_01_install_prereqs', 'Install Prerequisite Software', force=again)
+    run_step('_02_ping_permissions', 'Grant Ping Permission', force=again)
+    run_step('_09_secure_php', 'Secure the PHP Installation', force=again)
+    run_step('_10_prep_config_file', 'Generate Default WOL Config File', False)
+    run_step('_03_copy_webroot', 'Copy Webroot', False)
+    return True
 
-    if remote_mode == "port_forward":
-        # ddclient DDNS Setup
-        run_step('_04_setup_ddns', 'Setup DDNS')
+# Section 2: how RWSOLS is reached from outside the LAN (and the Cloudflare Tunnel / Access setup, if chosen)
+def section_remote():
+    global remote_mode
+    from rwsols_setup import sections, wizard
+    from rwsols_setup.errors import SetupError
+    before = sections.load(ctx).get('mode')
+    try:
+        remote_mode = wizard.choose_mode(ctx)
+        wiz = wizard.RemoteAccessWizard(ctx, remote_mode, [], get_local_ip() or None)
+        wiz.plan(parts=('mode',))
+        wiz.prepare_cloud()
+        wiz.write_config()
+        run_step('_12_copy_webroot', 'Copy Configured Webroot', False)
+        wiz.apply_local()
+    except SetupError as e:
+        ui.error("\n" + str(e))
+        return False
+    if before != remote_mode:
+        # The certificate choices depend on the mode, and port forwarding cannot work without dynamic DNS.
+        redo = ['https'] + (['ddns'] if remote_mode == "port_forward" and not wizard.ddclient_hosts(ctx.runner) else [])
+        sections.unmark(ctx, *redo)
+        ui.hint("Because the remote access mode changed, setup will also go through: " + ", ".join(sections.TITLES[k] for k in redo) + ".")
+    return True
 
-        # Get Public IPv4 Address
-        run_step('_05_get_ip', 'Get Public IPv4 Address', False)
-
-        # Confirm functional URL
-        run_step('_06_check_urls', 'Check DNS URL Resolution', False)
-
-        # Check if our server is up and serving content on port 80
-        run_step('_07_server_check', 'Check if RWSOLS is accessible on port 80 and/or port 443', False)
+# Section 3: dynamic DNS. Required for port forwarding. Optional otherwise, and independent of a Cloudflare Tunnel.
+def section_ddns():
+    global urls
+    from rwsols_setup import sections, wizard
+    mode = current_mode()
+    required = (mode == "port_forward")
+    hosts = wizard.ddclient_hosts(ctx.runner)
+    urls = []
+    if required:
+        ui.explain("Dynamic DNS", [
+            "Port forwarding needs a domain name that always points at your home IP address, which most internet providers change from time to time. Dynamic DNS keeps the name up to date.",
+            "This Pi can do the updating (with ddclient), or your router or another device can."])
     else:
-        # No public URL: DDNS, public IP and port 80/443 checks are skipped.
-        run_step('_07_lan_encryption_check', 'Choose LAN encryption', False)
+        ui.explain("Dynamic DNS (optional)", [
+            "With " + sections.MODE_NAMES.get(mode, mode) + ", RWSOLS itself does not need dynamic DNS.",
+            "Set it up only if you want a domain name to keep following your home IP address for something else: a VPN, a game server, another website on your network.",
+            "It lives happily next to a Cloudflare Tunnel. The tunnel uses its own name (for example rwsols.example.com), and dynamic DNS keeps updating a different record (for example example.com)."])
+    if hosts:
+        ui.info("Dynamic DNS is already set up on this Pi for: " + ", ".join(hosts))
+        options = [("keep", "Keep it as it is."), ("pi", "Set it up again on this Pi.")]
+        if not required:
+            options.append(("off", "Turn it off on this Pi."))
+    elif required:
+        options = [("router", "My router or another device handles dynamic DNS."), ("pi", "Set up dynamic DNS on this Pi.")]
+    else:
+        options = [("none", "No dynamic DNS."), ("router", "My router or another device already handles it."), ("pi", "Set up dynamic DNS on this Pi.")]
+    c, _ = ui.choose("What would you like to do about dynamic DNS?", [label for _, label in options])
+    choice = options[c-1][0]
+    ui.say("")
 
-    # Setup requested encryption options
+    if choice == "none":
+        sections.update(ctx, ddns="none")
+        return True
+    if choice == "off":
+        try:
+            subprocess.run(['sudo', 'systemctl', 'disable', '--now', 'ddclient'], check=True)
+        except subprocess.CalledProcessError as e:
+            ui.warn("Error stopping the ddclient service.")
+            ui.warn(str(e))
+            return False
+        ui.say("ddclient is stopped and will not start at boot. Its configuration file was left in place.")
+        sections.update(ctx, ddns="none")
+        return True
+    if choice == "pi":
+        if not _04_setup_ddns(2):
+            return False
+    elif choice == "router":
+        _04_setup_ddns(1)
+    sections.update(ctx, ddns=("router" if choice == "router" else "pi"))
+
+    # Check that the name(s) now point at this network's public IP
+    if _05_get_ip() and _06_check_urls():
+        return True
+    if required:
+        return False
+    ui.warn("The check failed, but dynamic DNS is optional in this mode, so setup continues. Run this section again once it is fixed.")
+    return True
+
+# Section 4: how the Pi's own web server is encrypted (certificates)
+def section_https():
+    global urls, encryption_mode, dns_cert_names
+    from rwsols_setup import sections
+    mode = current_mode()
+    urls = []
+    dns_cert_names = []
+    encryption_mode = "skip"
+    if mode == "port_forward":
+        # Public names: find out what is being served on ports 80/443 to offer the right choices
+        fill_urls_var()
+        if not _07_server_check():
+            return False
+    elif not _07_lan_encryption_check():
+        return False
+
     if encryption_mode == "certbot":
         run_step('_08_certbot_setup', 'Certbot-Signed SSL Certificate Setup', False)
+    elif encryption_mode == "dns":
+        run_step('_08_dnscert_setup', 'Trusted LAN Certificate Setup (DNS challenge)', False)
     elif encryption_mode == "self":
         run_step('_08_selfcert_setup', 'Self-Signed SSL Certificate Setup', False)
     elif encryption_mode == "none":
         run_step('_08_unencrypted_setup', 'Unencrypted Setup', False)
     else:
         ui.say("No Apache2 encryption setting changes will be made.\n")
+    if encryption_mode != "skip":
+        sections.update(ctx, https={'kind': encryption_mode, 'names': list(dns_cert_names)})
 
-    # Security-Harden PHP installation
-    run_step('_09_secure_php', 'Secure the PHP Installation')
-
-    # Offer automatic security updates for the operating system (asked once)
-    run_step('_09b_auto_updates', 'Automatic Security Updates')
-
-    # Create user copy of config file
-    run_step('_10_prep_config_file', 'Generate Default WOL Config File', False)
-
-    # Create user copy of config file
-    run_step('_11_modify_config_file', 'Modify WOL Config File', False)
-
-    # Hostname allowlist / Cloudflare Tunnel / Access: questions and config.php keys (must happen before the webroot copy)
-    try:
-        wiz = wizard.RemoteAccessWizard(ctx, remote_mode, urls if remote_mode == "port_forward" else [], get_local_ip() or None)
-        wiz.plan()
-        wiz.prepare_cloud()
-        wiz.write_config()
-    except SetupError as e:
-        ui.error("\n" + str(e))
-        sys.exit(1)
-
-    # Copy webroot to apache webroot folder for web-serving
-    # We do this again here, because now the config has been updated
+    # config.php needs to know whether to send visitors to HTTPS
+    if not _set_use_https():
+        return False
     run_step('_12_copy_webroot', 'Copy Configured Webroot', False)
+    return True
 
-    # Apply the Apache allowlist, tunnel vhost and cloudflared service, then verify
+# Section 5: the hostname allowlist
+def section_allowlist():
+    from rwsols_setup import wizard
+    from rwsols_setup.errors import SetupError
     try:
-        wiz.apply_local()
+        wiz = wizard.RemoteAccessWizard(ctx, current_mode(), [], get_local_ip() or None)
+        wiz.plan(parts=('allowlist',))
+        wiz.write_config()
+        run_step('_12_copy_webroot', 'Copy Configured Webroot', False)
+        wiz.apply_local(service=False)
     except SetupError as e:
         ui.error("\n" + str(e))
-        sys.exit(1)
+        return False
+    return True
 
-    ui.success("Automatic Setup is now complete.")
+# Section 6: automatic security updates for the operating system
+def section_updates():
+    return _09b_auto_updates()
+
+# Section 7: the passphrase and the list of computers. Last, because it ends in a text editor.
+def section_config():
+    if not _11_modify_config_file():
+        return False
+    run_step('_12_copy_webroot', 'Copy Configured Webroot', False)
+    return True
 
 
 # Function for encapsulating parts of the setup process that can be skipped on script re-run
@@ -186,8 +294,8 @@ def main():
 # description: human-understandable setup name
 # dot_file_skippable: If True, this step will be skipped if already completed in previous run
 # Returns True if the setup step should be run, False if it was already previously completed
-def run_step(handle, description, dot_file_skippable=True):
-    if script_dir.joinpath("." + handle).exists() and dot_file_skippable:
+def run_step(handle, description, dot_file_skippable=True, force=False):
+    if script_dir.joinpath("." + handle).exists() and dot_file_skippable and not force:
         ui.info("'" + description + "' has already been completed. Skipping.\n")
     else:
         ui.info("Running: " + description)
@@ -267,8 +375,9 @@ def secure_webroot_permissions():
         ui.warn(str(e))
 
 # Setup Step 4: DDNS Configuration
-def _04_setup_ddns():
-    ddns_option, _ = ui.choose('Will you handle Dynamic DNS updates from your router, or would you like to setup Dynamic DNS updating on this Pi?', ['I will handle DDNS on my router or elsewhere.','I want to configure DDNS updates from this Pi.'])
+def _04_setup_ddns(ddns_option=None):
+    if ddns_option is None:
+        ddns_option, _ = ui.choose('Will you handle Dynamic DNS updates from your router, or would you like to setup Dynamic DNS updating on this Pi?', ['I will handle DDNS on my router or elsewhere.','I want to configure DDNS updates from this Pi.'])
     ui.say("")
     if ddns_option == 1:
         ui.say("Ok. If you haven't already, go configure your router or other device to update your DDNS service of choice, now.")
@@ -428,7 +537,7 @@ def _06_check_urls():
                 ui.warn(url + " resolves to " + resolved_ip + " instead of detected public IP of " + public_ipv4 + "! ")
     if failures:
         ui.warn("One or more of your URLs failed to resolve! Try running this script again after checking your domains and your DDNS configuration.")
-        ui.warn("Delete the setup_ddns dot file in this directory if you need to reconfigure local DDNS updating.")
+        ui.warn("Run the Dynamic DNS section of this script again if you need to reconfigure local DDNS updating.")
         return False
     return True
 
@@ -518,14 +627,28 @@ def _07_server_check():
         return True
 
 
-# Setup Step 7 (None/Tunnel modes): there is no public URL, so only ask about LAN encryption, using a LAN name
+# Setup Step 7 (None/Tunnel modes): there is no public URL served by this Pi's Apache, so only ask about LAN encryption, using a LAN name
 def _07_lan_encryption_check():
     global urls, encryption_mode
     default_name = socket.gethostname().split('.')[0] + '.local'
-    ui.explain("LAN name and encryption", [
+    lines = []
+    tunnel_host = None
+    if ctx is not None:
+        from rwsols_setup import sections
+        st = sections.load(ctx)
+        if st.get('mode') == "tunnel":
+            tunnel_host = (st.get('tunnel') or {}).get('hostname')
+    if tunnel_host:
+        lines += [
+            "Your tunnel address, https://" + tunnel_host + ", already has a certificate that every browser trusts. Cloudflare provides and renews it, and it works the same inside and outside your home. Using that one address everywhere is the simplest way to never see a browser warning.",
+            "A Let's Encrypt certificate that renews through port 80 is not needed with a tunnel. If you have one from a port forwarding setup, it stops renewing once the port forward is gone.",
+            "The rest of this section is only about opening RWSOLS directly on your home network (for example by its .local name), which keeps working when your internet connection is down."]
+    lines += [
         "The LAN name is how you reach this Pi from your home network (this Pi's mDNS name by default). It is also used as the name on the self-signed certificate, if you choose one.",
         "Self-signed HTTPS encrypts traffic on your LAN, but browsers will show a warning because no authority vouches for the certificate. Plain HTTP has no warning but no encryption.",
-        "Keeping the existing settings changes nothing about how Apache is currently set up."])
+        "A .local name or an IP address can never get a certificate that browsers trust. A LAN name inside a domain whose DNS is hosted at Cloudflare can (last option).",
+        "Keeping the existing settings changes nothing about how Apache is currently set up."]
+    ui.explain("LAN name and encryption", lines)
 
     def valid_name(v):
         if not is_valid_hostname(v):
@@ -533,8 +656,14 @@ def _07_lan_encryption_check():
         return v
 
     urls = [ui.ask('Name used to reach this Pi on your LAN (also the self-signed certificate name)', default_name, validator=valid_name)]
-    c, _ = ui.choose('How should RWSOLS be served on your local network?', ['Keep the existing encryption settings.', 'Use a self-signed certificate (HTTPS; browsers will warn).', 'No encryption (plain HTTP on the LAN).'])
-    encryption_mode = ["skip", "self", "none"][c-1]
+    options = ['Keep the existing encryption settings.', 'Use a self-signed certificate (HTTPS; browsers will warn).', 'No encryption (plain HTTP on the LAN).']
+    modes = ["skip", "self", "none"]
+    if ctx is not None:
+        options.append("Get a trusted certificate for a LAN name in my Cloudflare domain (Let's Encrypt; a DNS token stays on this Pi).")
+        modes.append("dns")
+    c, _ = ui.choose('How should RWSOLS be served on your local network?', options)
+    encryption_mode = modes[c-1]
+    return True
     return True
 
 # Setup Step 8: Certbot config
@@ -584,7 +713,10 @@ def _08_selfcert_setup():
         # Disable the certbot site if enabled from previously being setup with the script
         subprocess.run(['sudo', 'a2dissite', '000-default-le-ssl'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+        forget_dns_certificate()
         subprocess.run(['sudo', 'mkdir', '-p', '/etc/apache2/ssl'], check=True)
+        # These may be links to a Let's Encrypt certificate from the DNS-challenge option: never write through them
+        subprocess.run(['sudo', 'rm', '-f', '/etc/apache2/ssl/wol.key', '/etc/apache2/ssl/wol.crt'], check=True)
         subprocess.run(['sudo', 'openssl', 'req', '-new', '-newkey', 'rsa:4096', '-days', '365', '-nodes', '-x509', '-subj', '/C=AQ/ST=Unlisted/L=Unlisted/O=RWSOLS/CN=%s' % urls[0], '-keyout', '/etc/apache2/ssl/wol.key', '-out', '/etc/apache2/ssl/wol.crt'], check=True)
         subprocess.run(['sudo', 'a2enmod', 'ssl'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(['sudo', 'a2enmod', 'headers'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -597,6 +729,57 @@ def _08_selfcert_setup():
         return False
     return True
 
+# Alternate Setup Step 8: A browser-trusted certificate for a LAN name, from Let's Encrypt, using a DNS challenge at Cloudflare (no open port needed)
+def _08_dnscert_setup():
+    global urls, dns_cert_names
+    from rwsols_setup import lancert, wizard
+    from rwsols_setup.errors import SetupError
+    token = None
+    try:
+        # Names the LAN's own DNS already gives this Pi are the natural candidates
+        helper = wizard.RemoteAccessWizard(ctx, current_mode(), [], get_local_ip() or None)
+        candidates = helper._search_domain_candidates() + [n for n in [helper._reverse_dns_candidate()] if n]
+        names, email, token = lancert.plan(ctx, candidates, wizard.ddclient_cloudflare_token(ctx.runner))
+        ui.say("Requesting the certificate. This takes about a minute...")
+        lancert.issue(ctx, names, email, token)
+    except SetupError as e:
+        ui.warn("The trusted certificate could not be set up.")
+        ui.warn(str(e))
+        return False
+    finally:
+        token = None
+
+    try:
+        # An older certificate that renews over port 80 would only fail from now on
+        if pathlib.Path('/etc/apache2/sites-enabled/000-default-le-ssl.conf').exists():
+            old = wizard.ddclient_hosts(ctx.runner)
+            if old and ui.confirm("Remove the old Let's Encrypt certificate for " + ", ".join(old) + " (it renews over port 80)?", True):
+                for url in old:
+                    subprocess.run(['sudo', 'certbot', 'delete', '-q', '--cert-name', url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(['sudo', 'a2dissite', '000-default-le-ssl'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['sudo', 'a2enmod', 'ssl'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['sudo', 'a2enmod', 'headers'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        copy_config_with_backup(script_dir.joinpath('apache2_configs/ssl.conf'), '/etc/apache2/mods-available/ssl.conf')
+        copy_config_with_backup(script_dir.joinpath('apache2_configs/000-default_self-https.conf'), '/etc/apache2/sites-available/000-default.conf')
+        subprocess.run(['sudo', 'service', 'apache2', 'restart'], check=True)
+    except subprocess.CalledProcessError as e:
+        ui.warn("The certificate was issued, but Apache could not be switched over to it.")
+        ui.warn(str(e))
+        return False
+    urls = list(names)
+    dns_cert_names = list(names)
+    ui.success("https://" + names[0] + " now has a trusted certificate. It renews by itself.")
+    ui.hint("If the hostname allowlist is on, add " + names[0] + " to it (the Hostname allowlist section offers it).")
+    return True
+
+# Drop the DNS-challenge certificate and its stored API token when another encryption choice replaces it
+def forget_dns_certificate():
+    if ctx is None:
+        return
+    from rwsols_setup import lancert
+    if lancert.cleanup(ctx):
+        ui.say("Removed the DNS-challenge certificate and the API token that was stored for its renewals.")
+
 # Alternate Setup Step 8: Unencrypted Config (We still copy over the 000-default file because it has some security improvements, but the 443 virtual host is ignored because ssl mod is disabled)
 def _08_unencrypted_setup():
     fill_urls_var()
@@ -608,6 +791,7 @@ def _08_unencrypted_setup():
         # Disable the certbot site if enabled from previously being setup with the script
         subprocess.run(['sudo', 'a2dissite', '000-default-le-ssl'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+        forget_dns_certificate()
         subprocess.run(['sudo', 'a2dismod', 'ssl'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(['sudo', 'a2enmod', 'headers'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         copy_config_with_backup(script_dir.joinpath('apache2_configs/000-default_http.conf'), '/etc/apache2/sites-available/000-default.conf')
@@ -666,7 +850,7 @@ def _09b_auto_updates():
         ui.warn("Automatic security updates could not be enabled:")
         ui.warn(str(e))
         ui.say("You can set this up yourself with: sudo apt install unattended-upgrades")
-        ui.say("To have this script try again, delete the '._09b_auto_updates' dot file in this folder and re-run it.")
+        ui.say("To have this script try again, run it again and choose the Security updates section.")
     return True
 
 # Step 10: Generate default config file for WOL page if one doesn't already exist
@@ -684,44 +868,40 @@ def _10_prep_config_file():
     ui.say("A default WOL config file has been created for you.")
     return True
 
-# Step 11: Help with editing of the config file
+# Sets $USE_HTTPS in config.php to match how Apache is serving RWSOLS (called by the HTTPS section)
+def _set_use_https():
+    if not rwsols_config_user.exists():
+        ui.warn("Config file couldn't be located for editing!")
+        return False
+    with open(rwsols_config_user) as f:
+        if not any("$USE_HTTPS" in line for line in f):
+            ui.warn("The RWSOLS config file is improperly formatted. Consider deleting your config.php file and re-running this script to recreate the default config.")
+            return False
+
+    if remote_mode_is_lan_only_listener() and encryption_mode in ("self", "none", "dns"):
+        https_rwsols = (encryption_mode != "none") # LAN listener we just configured: no probe needed
+    else:
+        http_server, http_rwsols, https_server, https_rwsols, https_signed = rwsols_serving_status()
+    try:
+        subprocess.run(['sudo', 'sed', '-i', 's/.*$USE_HTTPS.*/$USE_HTTPS = ' + ('true' if https_rwsols else 'false') + ';/g', rwsols_config_user], check=True)
+    except subprocess.CalledProcessError as e:
+        ui.warn("Error setting USE_HTTPS variable.")
+        ui.warn(str(e))
+        return False
+    return True
+
+# True when Apache on this Pi only serves the LAN (LAN only and Cloudflare Tunnel modes)
+def remote_mode_is_lan_only_listener():
+    return (current_mode() if ctx is not None else remote_mode) != "port_forward"
+
+# Step 11: The passphrase, then the rest of config.php (the list of computers) in a text editor
 def _11_modify_config_file():
     if not rwsols_config_user.exists():
         ui.warn("Config file couldn't be located for editing!")
         return False
-
-    # Check for the variables we are going to edit
-    use_https_found = False
-    approved_hash_found = False
     with open(rwsols_config_user) as f:
-        for line in f:
-            if "$APPROVED_HASH" in line:
-                approved_hash_found = True
-            if "$USE_HTTPS" in line:
-                use_https_found = True
-    if not use_https_found or not approved_hash_found:
-        ui.warn("The RWSOLS config file is improperly formatted. Consider deleting your config.php file and re-running this script to recreate the default config.")
-        return False
-
-
-    # If we're encrypted, pre-set that value correctly in the config file.
-    if remote_mode != "port_forward" and encryption_mode in ("self", "none"):
-        https_rwsols = (encryption_mode == "self") # LAN listener we just configured: no probe needed
-    else:
-        http_server, http_rwsols, https_server, https_rwsols, https_signed = rwsols_serving_status()
-    if https_rwsols:
-        try:
-            subprocess.run(['sudo', 'sed', '-i', 's/.*$USE_HTTPS.*/$USE_HTTPS = true;/g', rwsols_config_user], check=True)
-        except subprocess.CalledProcessError as e:
-            ui.warn("Error setting USE_HTTPS variable.")
-            ui.warn(str(e))
-            return False
-    else:
-        try:
-            subprocess.run(['sudo', 'sed', '-i', 's/.*$USE_HTTPS.*/$USE_HTTPS = false;/g', rwsols_config_user], check=True)
-        except subprocess.CalledProcessError as e:
-            ui.warn("Error setting USE_HTTPS variable.")
-            ui.warn(str(e))
+        if not any("$APPROVED_HASH" in line for line in f):
+            ui.warn("The RWSOLS config file is improperly formatted. Consider deleting your config.php file and re-running this script to recreate the default config.")
             return False
 
     # Generate Password Hash for user. If one already appears to be set, ask if they want to change it or leave it.
@@ -775,8 +955,13 @@ def _11_modify_config_file():
             ui.warn('The password could not be updated.')
             return False
 
-    ui.say("\nFor the remainder of the configuration, it's easiest for you to edit the file directly.")
-    ui.pause("Press enter to open the config file with nano for editing so you can input your values. Save and exit when done.")
+    ui.explain("Your computers", [
+        "The last thing to fill in is the list of computers RWSOLS can wake: their names, MAC addresses and IP addresses. That is easiest in a text editor.",
+        "The file opens in nano. Edit the values near the top, then press Ctrl+O and Enter to save, and Ctrl+X to leave.",
+        "Leave the settings further down (allowed hosts, tunnel, Access) alone: the other setup sections manage those."])
+    if not ui.confirm("Open config.php in the editor now?", True):
+        ui.say("Skipped. Run this section again when you want to edit it.")
+        return True
     try:
         subprocess.run(['nano', str(rwsols_config_user)], check=True)
     except subprocess.CalledProcessError:
@@ -813,7 +998,7 @@ def fill_urls_var():
             ui.warn("Could not automatically determine the desired URL(s) from ddclient.")
             ui.warn(str(e))
             ui.say("\nIf you ARE running ddclient locally (i.e. Configured by this script), but this failed, it's possible your configuration file is incorrect.")
-            ui.say("You can always re-run that step by deleting the 'setup_ddns' dot file in this folder and re-running this script.")
+            ui.say("You can always set it up again by running the Dynamic DNS section of this script.")
             ui.say("Or, edit your ddclient config file manually at " + str(ddns_real_config) + ".\n")
     # If we couldn't grab it from ddclient config file either, then we must ask user
     if len(urls) == 0:
