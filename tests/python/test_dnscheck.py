@@ -94,7 +94,7 @@ class ModeGateTests(unittest.TestCase):
         self.assertEqual(len(self.labels()), 3)
         text = env.ui.text()
         self.assertIn('DNS for example.com is managed by Cloudflare. Cloudflare Tunnel is available.', text)
-        self.assertNotIn('Domain to use with Cloudflare', text)
+        self.assertNotIn('Your domain, e.g. example.com', text)
         self.assertNotIn(SKIP, text)
         self.assertEqual(env.ctx.cloudflare_base, 'home.example.com')
 
@@ -114,7 +114,7 @@ class ModeGateTests(unittest.TestCase):
         self.assertIn('python3 setup.py --remote-access', text)
 
     def test_user_can_name_a_cloudflare_domain_updated_some_other_way(self):
-        env = self.env([('Domain to use with Cloudflare', 'example.com'), ('Choose a remote access mode', 3)],
+        env = self.env([('Your domain, e.g. example.com', 'example.com'), ('Choose a remote access mode', 3)],
                        names=['pi.elsewhere.example.net'])
         self.assertEqual(wizard.choose_mode(env.ctx), 'tunnel')
         self.assertEqual(env.ctx.cloudflare_base, 'example.com')
@@ -123,7 +123,7 @@ class ModeGateTests(unittest.TestCase):
         self.assertEqual(w.new['TUNNEL_HOSTNAME'], 'rwsols.example.com')
 
     def test_wrong_domain_is_reasked_until_blank(self):
-        env = self.env([('Domain to use with Cloudflare', ['elsewhere.example.net', 'nothing-here.example.org', ''])])
+        env = self.env([('Your domain, e.g. example.com', ['elsewhere.example.net', 'nothing-here.example.org', ''])])
         os.remove(env.config_path)
         self.assertEqual(wizard.choose_mode(env.ctx), 'none')
         self.assertEqual(len(self.labels()), 2)

@@ -20,7 +20,8 @@ $APPROVED_HASH = NULL;
 // >>
 // >
 
-// The rest of the value should be set by you based on your configuration of computers to wake/sleep
+// The rest of the values describe the computers to wake/sleep. The setup script asks for them and fills them in (section "Passphrase and computers");
+// you can also edit them here by hand.
 // Note that this file (and everything else in this folder) needs to be copied into /var/www/html, as that if where apache's webroot is.
 // The Setup script will automatically copy this file over at completion, and you can run it again if needed.
 // -------------------------------
@@ -73,7 +74,10 @@ $ALLOW_LOCALHOST = false;
 // Write a rate-limited syslog line (client IP and Host) for each request rejected by $ALLOWED_HOSTS. Default = false.
 $LOG_HOST_REJECTIONS = false;
 
-// Public hostname served through Cloudflare Tunnel, e.g. "wol.example.com". It must also be listed in $ALLOWED_HOSTS. Default = NULL.
+// Public hostname served through Cloudflare Tunnel: the one address you type to reach RWSOLS from outside your home.
+// Normally a subdomain of your domain, e.g. "rwsols.example.com" when your domain is example.com. Only this name is handed to the tunnel;
+// the domain itself (example.com) and its other subdomains are not touched and stay free for dynamic DNS, a website or other services.
+// It must also be listed in $ALLOWED_HOSTS. Default = NULL.
 $TUNNEL_HOSTNAME = NULL;
 
 // Loopback Apache listener that cloudflared forwards to. Used only by the setup wizard. Defaults = "127.0.0.1" and 8080.
