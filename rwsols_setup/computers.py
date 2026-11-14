@@ -6,7 +6,7 @@ from . import phpconfig
 
 SAMPLE_MAC = '00:00:00:00:00:00'
 SLEEP_COMMANDS = ('suspend', 'hibernate', 'logoff', 'poweroff', 'forcepoweroff', 'lock', 'reboot')
-SLEEP_UTILITY_URL = 'http://www.ireksoftware.com/SleepOnLan/'
+SLEEP_UTILITY_URL = 'https://www.jeremyblum.com/wp-content/uploads/2013/07/SleepOnLan.zip'
 DEFAULTS = {'MAX_PINGS': 15, 'SLEEP_TIME': 5, 'COMPUTER_SLEEP_CMD_PORT': 7760, 'COMPUTER_SLEEP_CMD': 'suspend'}
 
 LIST_QUERY = 'What would you like to do with this list?'

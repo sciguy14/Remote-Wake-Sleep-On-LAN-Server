@@ -42,8 +42,7 @@ $COMPUTER_MAC = array("00:00:00:00:00:00","00:00:00:00:00:00");
 $COMPUTER_LOCAL_IP = array("192.168.0.1","192.168.0.2");
 
 // This is the Port being used by the Windows SleepOnLan Utility to initiate a Sleep State
-// http://www.ireksoftware.com/SleepOnLan/
-// Alternate Download Link: http://www.jeremyblum.com/wp-content/uploads/2013/07/SleepOnLan.zip
+// Download Link: https://www.jeremyblum.com/wp-content/uploads/2013/07/SleepOnLan.zip
 $COMPUTER_SLEEP_CMD_PORT = 7760;
 
 // Command to be issued by the windows sleeponlan utility
