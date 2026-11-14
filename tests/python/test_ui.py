@@ -429,8 +429,8 @@ class SetupPyTests(unittest.TestCase):
     def test_uses_no_raw_prompts(self):
         with open(os.path.join(fakes.ROOT, 'setup.py'), newline='') as f:
             src = f.read()
-        self.assertIn('\r\n', src)            # CRLF preserved
-        self.assertNotIn('\n', src.replace('\r\n', ''))
+        # One line-ending style throughout: CRLF in a Windows checkout, LF everywhere else
+        self.assertIn(src.count('\r\n'), (0, src.count('\n')))
         for banned in (' input(', '\tinput(', 'getpass', 'multi_choice', "print('\\n", 'yellow(', 'cyan('):
             self.assertNotIn(banned, src, banned)
 
